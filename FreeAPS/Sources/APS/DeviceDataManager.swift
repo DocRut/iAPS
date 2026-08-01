@@ -59,12 +59,14 @@ private let accessLock = NSRecursiveLock(label: "BaseDeviceDataManager.accessLoc
 
 private let staticCGMManagers: [CGMManagerDescriptor] = [
     CGMManagerDescriptor(identifier: MockCGMManager.pluginIdentifier, localizedTitle: MockCGMManager.localizedTitle),
-    CGMManagerDescriptor(identifier: AppGroupCGM.pluginIdentifier, localizedTitle: AppGroupCGM.localizedTitle)
+    CGMManagerDescriptor(identifier: AppGroupCGM.pluginIdentifier, localizedTitle: AppGroupCGM.localizedTitle),
+    CGMManagerDescriptor(identifier: AidexCGMManager.pluginIdentifier, localizedTitle: AidexCGMManager.localizedTitle)
 ]
 
 private let staticCGMManagersByIdentifier: [String: CGMManager.Type] = [
     MockCGMManager.pluginIdentifier: MockCGMManager.self,
-    AppGroupCGM.pluginIdentifier: AppGroupCGM.self
+    AppGroupCGM.pluginIdentifier: AppGroupCGM.self,
+    AidexCGMManager.pluginIdentifier: AidexCGMManager.self
 ]
 
 private let staticPumpManagersByIdentifier: [String: PumpManagerUI.Type] = [
