@@ -10,10 +10,10 @@ on:
   push:
     paths:
       - 'FreeAPS/**'
+      - 'FreeAPS.xcodeproj/**'
       - 'LoopKit/**'
       - 'Dependencies/**'
       - '.github/workflows/compile_check.yml'
-
 jobs:
   build:
     name: Build for Simulator
