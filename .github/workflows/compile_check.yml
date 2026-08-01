@@ -1,0 +1,77 @@
+name: 0. Compile Check (без Apple Developer)
+run-name: Compile Check (${{ github.ref_name }})
+
+# Проверка только компиляции: сборка под симулятор с отключённой подписью.
+# Apple Developer аккаунт, сертификаты и секреты НЕ требуются.
+# IPA на выходе не получится — цель только поймать ошибки компиляции.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'FreeAPS/**'
+      - 'LoopKit/**'
+      - 'Dependencies/**'
+      - '.github/workflows/compile_check.yml'
+
+jobs:
+  build:
+    name: Build for Simulator
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Show environment
+        run: |
+          xcodebuild -version
+          echo "--- доступные симуляторы iOS ---"
+          xcrun simctl list runtimes | grep iOS || true
+
+      # DEVELOPER_TEAM в Config.xcconfig — плейсхолдер ##TEAM_ID##.
+      # Для сборки без подписи подставляем пустое значение.
+      - name: Neutralize team placeholder
+        run: |
+          sed -i '' 's/DEVELOPER_TEAM = ##TEAM_ID##/DEVELOPER_TEAM =/' Config.xcconfig
+          cat Config.xcconfig
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -workspace FreeAPS.xcworkspace \
+            -scheme FreeAPSWorkspace \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            ONLY_ACTIVE_ARCH=NO \
+            | tee build.log
+
+      # Отдельным шагом — короткая сводка ошибок,
+      # чтобы не листать весь лог xcodebuild.
+      - name: Error summary
+        if: failure()
+        run: |
+          echo "=============== ОШИБКИ ==============="
+          grep -E "error:|warning: .*Aidex" build.log | head -60 || true
+          echo "======================================"
+
+      - name: Upload full log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7
