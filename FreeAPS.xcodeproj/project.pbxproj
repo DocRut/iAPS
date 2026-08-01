@@ -475,6 +475,12 @@
 		F292C1CF2F5EF09700B08D81 /* DismissableTextField.swift in Sources */ = {isa = PBXBuildFile; fileRef = F292C1CE2F5EF08300B08D81 /* DismissableTextField.swift */; };
 		F292C1D12F5F0BF800B08D81 /* OptionalDecimalTextField.swift in Sources */ = {isa = PBXBuildFile; fileRef = F292C1D02F5F0BF300B08D81 /* OptionalDecimalTextField.swift */; };
 		F2941FA12E787F6500A9DD5D /* AppGroupCGM.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2941FA02E787F6500A9DD5D /* AppGroupCGM.swift */; };
+		A1DE00000000000000000003 /* AidexCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1DE00000000000000000002 /* AidexCrypto.swift */; };
+		A1DE00000000000000000005 /* AidexProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1DE00000000000000000004 /* AidexProtocol.swift */; };
+		A1DE00000000000000000007 /* AidexBLEManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1DE00000000000000000006 /* AidexBLEManager.swift */; };
+		A1DE00000000000000000009 /* AidexCGMManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1DE00000000000000000008 /* AidexCGMManager.swift */; };
+		A1DE0000000000000000000B /* AidexCGMManager+UI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1DE0000000000000000000A /* AidexCGMManager+UI.swift */; };
+		A1DE0000000000000000000D /* AidexCGMPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1DE0000000000000000000C /* AidexCGMPlugin.swift */; };
 		F2941FA32E787F9F00A9DD5D /* AppGroupCGM+UI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2941FA22E787F9F00A9DD5D /* AppGroupCGM+UI.swift */; };
 		F2941FA52E787FCC00A9DD5D /* AppGroupCGMSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2941FA42E787FCC00A9DD5D /* AppGroupCGMSettingsViewController.swift */; };
 		F2941FA72E78806800A9DD5D /* AppGroupCGMSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2941FA62E78806800A9DD5D /* AppGroupCGMSettingsView.swift */; };
@@ -1183,6 +1189,12 @@
 		F292C1CE2F5EF08300B08D81 /* DismissableTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DismissableTextField.swift; sourceTree = "<group>"; };
 		F292C1D02F5F0BF300B08D81 /* OptionalDecimalTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OptionalDecimalTextField.swift; sourceTree = "<group>"; };
 		F2941FA02E787F6500A9DD5D /* AppGroupCGM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupCGM.swift; sourceTree = "<group>"; };
+		A1DE00000000000000000002 /* AidexCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AidexCrypto.swift; sourceTree = "<group>"; };
+		A1DE00000000000000000004 /* AidexProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AidexProtocol.swift; sourceTree = "<group>"; };
+		A1DE00000000000000000006 /* AidexBLEManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AidexBLEManager.swift; sourceTree = "<group>"; };
+		A1DE00000000000000000008 /* AidexCGMManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AidexCGMManager.swift; sourceTree = "<group>"; };
+		A1DE0000000000000000000A /* AidexCGMManager+UI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AidexCGMManager+UI.swift"; sourceTree = "<group>"; };
+		A1DE0000000000000000000C /* AidexCGMPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AidexCGMPlugin.swift; sourceTree = "<group>"; };
 		F2941FA22E787F9F00A9DD5D /* AppGroupCGM+UI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppGroupCGM+UI.swift"; sourceTree = "<group>"; };
 		F2941FA42E787FCC00A9DD5D /* AppGroupCGMSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupCGMSettingsViewController.swift; sourceTree = "<group>"; };
 		F2941FA62E78806800A9DD5D /* AppGroupCGMSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupCGMSettingsView.swift; sourceTree = "<group>"; };
@@ -2051,6 +2063,7 @@
 			isa = PBXGroup;
 			children = (
 				F2941F9F2E787F3000A9DD5D /* AppGroupCGM */,
+				A1DE00000000000000000001 /* Aidex */,
 				38569344270B5DFA0002C50D /* CGMType.swift */,
 				3862CC03273D150600BF832C /* Calibrations */,
 				F2A4B7C52E6C9180000E0E85 /* BloodGlucoseManager.swift */,
@@ -2923,6 +2936,19 @@
 			path = Components;
 			sourceTree = "<group>";
 		};
+		A1DE00000000000000000001 /* Aidex */ = {
+			isa = PBXGroup;
+			children = (
+				A1DE00000000000000000002 /* AidexCrypto.swift */,
+				A1DE00000000000000000004 /* AidexProtocol.swift */,
+				A1DE00000000000000000006 /* AidexBLEManager.swift */,
+				A1DE00000000000000000008 /* AidexCGMManager.swift */,
+				A1DE0000000000000000000A /* AidexCGMManager+UI.swift */,
+				A1DE0000000000000000000C /* AidexCGMPlugin.swift */,
+			);
+			path = Aidex;
+			sourceTree = "<group>";
+		};
 		F2941F9F2E787F3000A9DD5D /* AppGroupCGM */ = {
 			isa = PBXGroup;
 			children = (
@@ -3398,6 +3424,12 @@
 				F21580A52E47B4FF003BC827 /* PeakPicker.swift in Sources */,
 				38E44537274E411700EC9A94 /* Disk+Helpers.swift in Sources */,
 				F2941FA32E787F9F00A9DD5D /* AppGroupCGM+UI.swift in Sources */,
+				A1DE00000000000000000003 /* AidexCrypto.swift in Sources */,
+				A1DE00000000000000000005 /* AidexProtocol.swift in Sources */,
+				A1DE00000000000000000007 /* AidexBLEManager.swift in Sources */,
+				A1DE00000000000000000009 /* AidexCGMManager.swift in Sources */,
+				A1DE0000000000000000000B /* AidexCGMManager+UI.swift in Sources */,
+				A1DE0000000000000000000D /* AidexCGMPlugin.swift in Sources */,
 				F2EE83C52E739B0100D7177E /* CalendarShareStateModel.swift in Sources */,
 				196809E22D46E7B300BA566F /* OpenClosedShortcuts.swift in Sources */,
 				388E5A6025B6F2310019842D /* Autosens.swift in Sources */,
