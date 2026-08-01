@@ -30,9 +30,7 @@ extension AidexCGMManager: CGMManagerUI {
         colorPalette _: LoopUIColorPalette,
         allowDebugFeatures _: Bool
     ) -> CGMManagerViewController {
-        let host = AidexSettingsHostingController(
-            rootView: AidexSettingsView(manager: self)
-        )
+        let host = AidexSettingsHostingController(manager: self)
         return CGMManagerSettingsNavigationViewController(rootViewController: host)
     }
 
@@ -116,28 +114,43 @@ struct AidexLifecycleProgress: DeviceLifecycleProgress {
 
 // MARK: - Экран настроек
 
-final class AidexSettingsHostingController: UIHostingController<AidexSettingsView>,
-    CGMManagerOnboardNotifying, CompletionNotifying
+// Образец: AppGroupCGMSettingsViewController.swift — там используется
+// только CompletionNotifying. Протокола CGMManagerOnboardNotifying
+// в этой версии LoopKitUI нет.
+public final class AidexSettingsHostingController: UIHostingController<AidexSettingsView>,
+    CompletionNotifying
 {
-    weak var cgmManagerOnboardingDelegate: CGMManagerOnboardingDelegate?
-    weak var completionDelegate: CompletionDelegate?
+    public var completionDelegate: CompletionDelegate?
 
-    override func viewDidDisappear(_ animated: Bool) {
+    public init(manager: AidexCGMManager) {
+        super.init(rootView: AidexSettingsView(manager: manager))
+    }
+
+    @available(*, unavailable)
+    @objc dynamic required init?(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override public func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         completionDelegate?.completionNotifyingDidComplete(self)
     }
 }
 
-struct AidexSettingsView: View {
+public struct AidexSettingsView: View {
     let manager: AidexCGMManager
 
     @State private var serial: String = ""
     @State private var showUnpairConfirm = false
     @State private var showClearConfirm = false
 
+    init(manager: AidexCGMManager) {
+        self.manager = manager
+    }
+
     private var serialIsValid: Bool { serial.count == 10 }
 
-    var body: some View {
+    public var body: some View {
         Form {
             Section {
                 TextField("напр. 222225C99G", text: $serial)
