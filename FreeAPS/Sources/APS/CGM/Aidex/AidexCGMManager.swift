@@ -263,7 +263,9 @@ public final class AidexCGMManager: CGMManager {
         )
     }
 
-    fileprivate var currentSessionState: AidexBLEManager.SessionState { sessionState }
+    /// Используется из AidexCGMManager+UI.swift — другой файл,
+    /// поэтому не fileprivate.
+    var currentSessionState: AidexBLEManager.SessionState { sessionState }
 }
 
 // MARK: - AlertResponder / AlertSoundVendor
@@ -281,7 +283,7 @@ public extension AidexCGMManager {
 
 extension AidexCGMManager: AidexBLEManagerDelegate {
 
-    public func aidex(didReceive samples: [AidexSample]) {
+    func aidex(didReceive samples: [AidexSample]) {
         guard !samples.isEmpty else { return }
 
         if let current = samples.first(where: { $0.isCurrent }) ?? samples.last {
@@ -313,7 +315,7 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
         delegate.notify { $0?.cgmManager(self, hasNew: .newData(newSamples)) }
     }
 
-    public func aidex(didChangeState state: AidexBLEManager.SessionState) {
+    func aidex(didChangeState state: AidexBLEManager.SessionState) {
         sessionState = state
 
         // Сохраняем сессионный ключ, как только он появился
@@ -340,7 +342,7 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
         delegate.notify { $0?.cgmManagerDidUpdateState(self) }
     }
 
-    public func aidex(didUpdateTimeModel model: AidexTimeModel) {
+    func aidex(didUpdateTimeModel model: AidexTimeModel) {
         mutateState {
             $0.baseStart = model.baseStart
             $0.secondsRemainder = model.secondsRemainder
@@ -349,14 +351,14 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
         }
     }
 
-    public func aidex(didReceiveDeviceInfo info: AidexDeviceInfo) {
+    func aidex(didReceiveDeviceInfo info: AidexDeviceInfo) {
         deviceInfo = info
         if info.lifeDays > 0 {
             mutateState { $0.sensorLifeDays = Int(info.lifeDays) }
         }
     }
 
-    public func aidex(didLog message: String) {
+    func aidex(didLog message: String) {
         debug(.deviceManager, message)
     }
 }
