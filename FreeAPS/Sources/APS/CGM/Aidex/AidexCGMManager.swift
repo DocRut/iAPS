@@ -196,7 +196,7 @@ public final class AidexCGMManager: CGMManager {
 
     // MARK: - CGMManager
 
-    public var isOnboarded: Bool { !state.serialNumber.isEmpty }
+    public var isOnboarded: Bool { true }
 
     public var shouldSyncToRemoteService: Bool { true }
 
