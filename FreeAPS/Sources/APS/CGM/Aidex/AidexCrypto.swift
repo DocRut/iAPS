@@ -1,24 +1,9 @@
-//
-//  AidexCrypto.swift
-//  Криптография и контрольные суммы протокола Aidex X / LumiFlex / LinX
-//
-//  Портировано с Juggluco (GPL-3.0), автор Jaap Korthals Altes:
-//    Common/src/main/cpp/aidexx/mkiv.cpp    — вывод ключа и IV
-//    Common/src/main/cpp/aidexx/decrypt.cpp — AES-128-CFB
-//    Common/src/main/cpp/aidexx/crc.cpp     — CRC8/CRC16/CRC32
-//
-//  ВНИМАНИЕ О ЛИЦЕНЗИИ: Juggluco под GPL-3.0 (копилефт).
-//  Для личной сборки это ограничений не создаёт. Для публикации форка
-//  нужно проверить совместимость с лицензией iAPS.
-//
-
 import CommonCrypto
 import Foundation
 
 // MARK: - Контрольные суммы
 
 enum AidexCRC {
-
     /// crc.cpp: crc8_maxim() — poly 0x8C (reflected 0x31), init 0x00
     /// Применение: проверка сессионного ключа (17-й байт).
     static func crc8Maxim(_ data: ArraySlice<UInt8>) -> UInt8 {
@@ -73,7 +58,6 @@ enum AidexCRC {
 // MARK: - Криптография
 
 enum AidexCrypto {
-
     // MARK: Серийный номер
 
     /// mkiv.cpp: snCharToVal()
@@ -126,6 +110,7 @@ enum AidexCrypto {
     }
 
     // MARK: AES-128-CFB
+
     // decrypt.cpp использует AES_cfb128_encrypt с num=0 => полноблочный CFB-128.
     // IV мутируется внутри вызова, но в оригинале каждый раз берётся свежая
     // копия постоянного IV (iv_local), поэтому состояние между пакетами

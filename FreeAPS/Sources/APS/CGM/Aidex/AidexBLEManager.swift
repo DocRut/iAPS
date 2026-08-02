@@ -215,7 +215,9 @@ final class AidexBLEManager: NSObject {
         writeEncrypted(AidexCommand.unpair)
     }
 
-    /// Полный сброс привязки (java.cpp: clearCMD). Ключ обнуляется.
+    /// Clear (java.cpp: clearCMD, 0xF3) — стирает историю глюкозы
+    /// на сенсоре, позволяя перезапустить его как новый.
+    /// Ключ обнуляется, потребуется повторное подключение.
     func clearSensor() {
         guard !sessionKey.isEmpty else { return }
         pendingClear = true

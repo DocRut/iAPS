@@ -1,17 +1,8 @@
-//
-//  AidexProtocol.swift
-//  Константы, команды и разбор пакетов Aidex X / LumiFlex / LinX
-//
-//  Портировано с Juggluco (GPL-3.0):
-//    Common/src/dex/java/tk/glucodata/AidexXGattCallback.java — UUID, поток GATT
-//    Common/src/main/cpp/aidexx/java.cpp                      — команды, диспетчер
-//    Common/src/main/cpp/aidexx/glucose.h                     — структуры данных
-//
-
 import CoreBluetooth
 import Foundation
 
 // MARK: - BLE идентификаторы
+
 // AidexXGattCallback.java, строки 177–190
 
 enum AidexBLE {
@@ -54,6 +45,7 @@ enum AidexBLE {
 }
 
 // MARK: - Команды
+
 // java.cpp. Все команды содержат CRC16 в хвосте и шифруются сессионным ключом.
 
 enum AidexCommand {
@@ -112,31 +104,32 @@ enum AidexCommand {
 /// Коды ответов в первых двух байтах расшифрованного пакета F002
 /// (java.cpp: switch(short1), little-endian uint16).
 enum AidexResponse: UInt16 {
-    case deviceInfo     = 0x0110
-    case onceOld        = 0x0111
-    case needTime0      = 0x0020
-    case needTime1      = 0x0120
+    case deviceInfo = 0x0110
+    case onceOld = 0x0111
+    case needTime0 = 0x0020
+    case needTime1 = 0x0120
     case localStartTime = 0x0121
-    case lastValue      = 0x0122
-    case pastValues     = 0x0123
-    case rawPastValues  = 0x0124
-    case wantTime       = 0x0131
-    case need11         = 0x0134
-    case need34         = 0x0135
-    case unpairOK       = 0x01F2
-    case unpairFail     = 0x00F2
-    case clearOK        = 0x01F3
-    case clearFail      = 0x00F3
+    case lastValue = 0x0122
+    case pastValues = 0x0123
+    case rawPastValues = 0x0124
+    case wantTime = 0x0131
+    case need11 = 0x0134
+    case need34 = 0x0135
+    case unpairOK = 0x01F2
+    case unpairFail = 0x00F2
+    case clearOK = 0x01F3
+    case clearFail = 0x00F3
 }
 
 // MARK: - Текущая глюкоза
+
 // glucose.h: CurrentGlucose — 15 байт, приходит по F003.
 
 struct AidexCurrentGlucose {
-    let type: UInt8            // байт 0; == 3 означает "сенсор завершён"
+    let type: UInt8 // байт 0; == 3 означает "сенсор завершён"
     let trend: Int8
     let minutesFromStart: UInt16
-    let glucose: UInt16        // мг/дл
+    let glucose: UInt16 // мг/дл
     let warmup: Bool
     let valid: Bool
 
@@ -149,9 +142,9 @@ struct AidexCurrentGlucose {
         trend = Int8(bitPattern: b[3])
         minutesFromStart = UInt16(b[4]) | UInt16(b[5]) << 8
         let packed = UInt16(b[6]) | UInt16(b[7]) << 8
-        glucose = packed & 0x03FF          // биты 0..9
-        warmup  = (packed & 0x0400) != 0   // бит 10
-        valid   = (packed & 0x8000) != 0   // бит 15
+        glucose = packed & 0x03FF // биты 0..9
+        warmup = (packed & 0x0400) != 0 // бит 10
+        valid = (packed & 0x8000) != 0 // бит 15
     }
 
     var sensorEnded: Bool { type == 3 }
@@ -166,6 +159,7 @@ struct AidexCurrentGlucose {
 }
 
 // MARK: - Историческое значение
+
 // glucose.h: HistoryGlucose — 2 байта, битовые поля.
 
 struct AidexHistoryGlucose {
@@ -179,8 +173,8 @@ struct AidexHistoryGlucose {
         guard b.count >= o + Self.length else { return nil }
         let packed = UInt16(b[o]) | UInt16(b[o + 1]) << 8
         glucose = packed & 0x03FF
-        warmup  = (packed & 0x0400) != 0
-        valid   = (packed & 0x8000) != 0
+        warmup = (packed & 0x0400) != 0
+        valid = (packed & 0x8000) != 0
     }
 
     /// java.cpp: savepast() — valid && validGlucose()
@@ -190,6 +184,7 @@ struct AidexHistoryGlucose {
 }
 
 // MARK: - LastPast
+
 // glucose.h: LastPast — 8 байт. Приходит в onceOld и в рекламных пакетах.
 
 struct AidexLastPast {
@@ -206,12 +201,12 @@ struct AidexLastPast {
     init?(_ b: [UInt8], at o: Int = 0) {
         guard b.count >= o + Self.length else { return nil }
         minutesFromStart = UInt16(b[o]) | UInt16(b[o + 1]) << 8
-        status  = b[o + 2]
+        status = b[o + 2]
         calTemp = b[o + 3]
-        trend   = Int8(bitPattern: b[o + 4])
+        trend = Int8(bitPattern: b[o + 4])
         let packed = UInt16(b[o + 5]) | UInt16(b[o + 6]) << 8
         glucose = packed & 0x03FF
-        valid   = (packed & 0x8000) != 0
+        valid = (packed & 0x8000) != 0
         quality = b[o + 7]
     }
 
@@ -223,6 +218,7 @@ struct AidexLastPast {
 }
 
 // MARK: - NextGlucose
+
 // glucose.h: NextGlucose — 3 байта. Два предыдущих значения в рекламе.
 
 struct AidexNextGlucose {
@@ -236,7 +232,7 @@ struct AidexNextGlucose {
         guard b.count >= o + Self.length else { return nil }
         let packed = UInt16(b[o]) | UInt16(b[o + 1]) << 8
         glucose = packed & 0x03FF
-        valid   = (packed & 0x8000) != 0
+        valid = (packed & 0x8000) != 0
         quality = b[o + 2]
     }
 
@@ -246,6 +242,7 @@ struct AidexNextGlucose {
 }
 
 // MARK: - Локальное время старта сенсора
+
 // java.cpp: struct LocalStartTime — 9 байт, packed.
 
 struct AidexLocalTime {
@@ -266,17 +263,18 @@ struct AidexLocalTime {
 
     init?(_ b: [UInt8], at o: Int = 0) {
         guard b.count >= o + Self.length else { return nil }
-        year   = UInt16(b[o]) | UInt16(b[o + 1]) << 8
-        month  = b[o + 2]
-        day    = b[o + 3]
-        hour   = b[o + 4]
+        year = UInt16(b[o]) | UInt16(b[o + 1]) << 8
+        month = b[o + 2]
+        day = b[o + 3]
+        hour = b[o + 4]
         minute = b[o + 5]
         second = b[o + 6]
-        timeZoneQuarterHours  = Int8(bitPattern: b[o + 7])
+        timeZoneQuarterHours = Int8(bitPattern: b[o + 7])
         dstOffsetQuarterHours = b[o + 8]
     }
 
     // MARK: Формирование для записи в сенсор
+
     // java.cpp: from_t_time() — использует ЛОКАЛЬНОЕ время устройства.
 
     init(date: Date) {
@@ -285,10 +283,10 @@ struct AidexLocalTime {
         let c = calendar.dateComponents(
             [.year, .month, .day, .hour, .minute, .second], from: date
         )
-        year   = UInt16(c.year ?? 2000)
-        month  = UInt8(c.month ?? 1)
-        day    = UInt8(c.day ?? 1)
-        hour   = UInt8(c.hour ?? 0)
+        year = UInt16(c.year ?? 2000)
+        month = UInt8(c.month ?? 1)
+        day = UInt8(c.day ?? 1)
+        hour = UInt8(c.hour ?? 0)
         minute = UInt8(c.minute ?? 0)
         second = UInt8(c.second ?? 0)
 
@@ -311,6 +309,7 @@ struct AidexLocalTime {
     }
 
     // MARK: Преобразование в Date
+
     // java.cpp: unixtime() — timegm(tm) - (tz+dst)*15*60
 
     var date: Date? {
@@ -341,6 +340,7 @@ struct AidexLocalTime {
 }
 
 // MARK: - Информация об устройстве
+
 // java.cpp: deviceInfo() — структура после двух байт кода.
 
 struct AidexDeviceInfo {
@@ -368,11 +368,11 @@ struct AidexDeviceInfo {
 }
 
 // MARK: - Рекламные пакеты
+
 // glucose.h: union AdvertiseBytes.
 // Пассивный канал: глюкоза без шифрования и без подключения.
 
 enum AidexAdvertisement {
-
     /// glucose.h: mkseed() — сумма четырёх little-endian uint32
     /// начиная со смещения 11, по модулю 0x7FA777.
     static func makeSeed(_ raw: [UInt8]) -> UInt32? {
@@ -381,7 +381,7 @@ enum AidexAdvertisement {
             UInt32(raw[o]) | UInt32(raw[o + 1]) << 8
                 | UInt32(raw[o + 2]) << 16 | UInt32(raw[o + 3]) << 24
         }
-        return (le32(11) &+ le32(15) &+ le32(19) &+ le32(23)) % 0x7F_A777
+        return (le32(11) &+ le32(15) &+ le32(19) &+ le32(23)) % 0x7FA777
     }
 
     /// glucose.h: goodcrc() — crc32_normal(bytes+11, 0x10, seed) == crc32

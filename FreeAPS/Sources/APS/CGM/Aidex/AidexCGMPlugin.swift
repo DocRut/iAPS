@@ -1,8 +1,3 @@
-//
-//  AidexCGMPlugin.swift
-//  Регистрация плагина. Шаблон: AppGroupCGMPlugin.swift (iAPS v8.0.4)
-//
-
 import LoopKitUI
 
 class AidexCGMPlugin: NSObject, CGMManagerUIPlugin {

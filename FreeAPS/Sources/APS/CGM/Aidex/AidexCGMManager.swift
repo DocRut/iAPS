@@ -189,13 +189,21 @@ public final class AidexCGMManager: CGMManager {
         ble.unpairSensor()
     }
 
-    /// Полный сброс привязки.
+    /// Команда Clear (0xF3): стирает с сенсора всю историю глюкозы,
+    /// позволяя запустить его как новый. По документации Juggluco —
+    /// только для тестов, показания после перезапуска недостоверны.
     public func clearSensor() {
         ble.clearSensor()
     }
 
     // MARK: - CGMManager
 
+    /// ВАЖНО: должно быть всегда true.
+    /// iAPS в cgmManagerOnboarding(didOnboardCGMManager:) делает
+    /// precondition(cgmManager.isOnboarded) — при false приложение падает.
+    /// Кроме того, CGMRootView показывает кнопку «CGM Configuration»
+    /// только при isOnboarded == true, а без неё некуда ввести
+    /// серийный номер. Образец: AppGroupCGM.isOnboarded { true }.
     public var isOnboarded: Bool { true }
 
     public var shouldSyncToRemoteService: Bool { true }
@@ -212,7 +220,7 @@ public final class AidexCGMManager: CGMManager {
 
     public var cgmManagerStatus: CGMManagerStatus {
         CGMManagerStatus(
-            hasValidSensorSession: isOnboarded && sessionState == .running,
+            hasValidSensorSession: !state.serialNumber.isEmpty && sessionState == .running,
             device: device
         )
     }

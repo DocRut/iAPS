@@ -122,8 +122,33 @@ public final class AidexSettingsHostingController: UIHostingController<AidexSett
 {
     public var completionDelegate: CompletionDelegate?
 
+    private let manager: AidexCGMManager
+
     public init(manager: AidexCGMManager) {
+        self.manager = manager
         super.init(rootView: AidexSettingsView(manager: manager))
+        // Замыкания задаём после super.init — rootView уже создан
+        rootView.onDelete = { [weak self] in self?.deleteCGM() }
+        rootView.onClose = { [weak self] in self?.closeSettings() }
+    }
+
+    /// Образец: AppGroupCGMSettingsViewController.subscribeOnChanges()
+    /// notifyDelegateOfDeletion приводит к cgmManagerWantsDeletion в iAPS,
+    /// там cgmManager = nil — и снова появляется список вариантов CGM.
+    private func deleteCGM() {
+        manager.disconnect()
+        manager.notifyDelegateOfDeletion {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.completionDelegate?.completionNotifyingDidComplete(self)
+                self.dismiss(animated: true)
+            }
+        }
+    }
+
+    private func closeSettings() {
+        completionDelegate?.completionNotifyingDidComplete(self)
+        dismiss(animated: true)
     }
 
     @available(*, unavailable)
@@ -140,9 +165,14 @@ public final class AidexSettingsHostingController: UIHostingController<AidexSett
 public struct AidexSettingsView: View {
     let manager: AidexCGMManager
 
+    /// Заполняется контроллером после инициализации
+    var onDelete: (() -> Void)?
+    var onClose: (() -> Void)?
+
     @State private var serial: String = ""
     @State private var showUnpairConfirm = false
     @State private var showClearConfirm = false
+    @State private var showDeleteConfirm = false
 
     init(manager: AidexCGMManager) {
         self.manager = manager
@@ -189,32 +219,69 @@ public struct AidexSettingsView: View {
             }
 
             Section {
-                Button("Отвязать сенсор", role: .destructive) {
+                Button("Отвязать сенсор от телефона", role: .destructive) {
                     showUnpairConfirm = true
                 }
                 .confirmationDialog(
-                    "Отвязать сенсор от этого телефона?",
+                    "Отвязать сенсор от этого телефона? Данные на сенсоре сохранятся, его можно будет подключить к другому устройству.",
                     isPresented: $showUnpairConfirm,
                     titleVisibility: .visible
                 ) {
                     Button("Отвязать", role: .destructive) { manager.unpairSensor() }
                     Button("Отмена", role: .cancel) {}
                 }
+            } header: {
+                Text("Управление сенсором")
+            } footer: {
+                Text("Чтобы подключить сенсор к другому телефону, сначала отвяжите его здесь.")
+            }
 
-                Button("Сбросить привязку", role: .destructive) {
+            Section {
+                Button("Перезапустить сенсор (Clear)", role: .destructive) {
                     showClearConfirm = true
                 }
                 .confirmationDialog(
-                    "Сбросить привязку полностью? Потребуется заново подключить сенсор.",
+                    "Стереть с сенсора все значения глюкозы и запустить его заново?",
                     isPresented: $showClearConfirm,
                     titleVisibility: .visible
                 ) {
-                    Button("Сбросить", role: .destructive) { manager.clearSensor() }
+                    Button("Перезапустить", role: .destructive) { manager.clearSensor() }
                     Button("Отмена", role: .cancel) {}
                 }
+            } footer: {
+                Text("""
+                Сенсор Aidex X рассчитан на 15 дней. Эта команда стирает с него всю \
+                историю глюкозы, после чего он работает как новый.
+
+                ВНИМАНИЕ: по данным разработчика Juggluco, показания перезапущенного \
+                сенсора сильно расходятся с истинными — в его примере Libre 3 показывал \
+                9.4 ммоль/л, а перезапущенный Aidex X — 3.7 ммоль/л. Использовать \
+                только для тестов, не для принятия решений о дозах инсулина.
+                """)
+            }
+
+            Section {
+                Button("Удалить Aidex из iAPS", role: .destructive) {
+                    showDeleteConfirm = true
+                }
+                .confirmationDialog(
+                    "Удалить Aidex как источник CGM? После этого можно будет выбрать другой сенсор.",
+                    isPresented: $showDeleteConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Удалить", role: .destructive) { onDelete?() }
+                    Button("Отмена", role: .cancel) {}
+                }
+            } footer: {
+                Text("Настройки сенсора будут удалены. Сам сенсор при этом не отвязывается — для этого используй «Отвязать сенсор» выше.")
             }
         }
         .navigationTitle("Aidex")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Готово") { onClose?() }
+            }
+        }
         .onAppear { serial = manager.serialNumber }
     }
 }
