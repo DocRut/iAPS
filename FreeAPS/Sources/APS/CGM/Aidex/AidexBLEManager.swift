@@ -600,21 +600,31 @@ final class AidexBLEManager: NSObject {
             return
         }
 
+        // java.cpp: aidexXprocessCurrentData() обрабатывает ТОЛЬКО типы 1 и 3.
+        // Тип 4 и прочие молча игнорируются.
+        let packetType = body[0]
+        guard packetType == 1 || packetType == 3 else {
+            log("F003: тип \(packetType) не обрабатывается")
+            return
+        }
+
         guard let current = AidexCurrentGlucose(body) else {
             log("F003: длина \(body.count), ожидалось \(AidexCurrentGlucose.packetLength)")
             return
         }
 
-        if current.sensorEnded {
-            log("сенсор завершил работу")
-            state = .sensorEnded
-            stop()
-            return
-        }
+        // java.cpp: saveCurrent() сохраняет значение ДО проверки на завершение
+        // сенсора, поэтому последнее показание с пакета типа 3 не теряется.
+        // Флаг обрабатываем после отправки значения — см. ниже.
 
         // java.cpp: saveGlucose() отказывается сохранять без известного времени
         guard hasTime else {
             log("F003: значение отброшено — время старта неизвестно")
+            if current.sensorEnded {
+                log("сенсор завершил работу")
+                state = .sensorEnded
+                stop()
+            }
             return
         }
 
@@ -646,6 +656,13 @@ final class AidexBLEManager: NSObject {
             AidexSample(id: id, glucose: Int(current.glucose),
                         rate: current.rate, date: timestamp, isCurrent: true)
         ])
+
+        // java.cpp: проверка data[0]==3 идёт ПОСЛЕ saveGlucose
+        if current.sensorEnded {
+            log("сенсор завершил работу")
+            state = .sensorEnded
+            stop()
+        }
     }
 }
 
