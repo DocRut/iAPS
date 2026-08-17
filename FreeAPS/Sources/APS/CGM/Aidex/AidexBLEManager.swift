@@ -147,6 +147,14 @@ final class AidexBLEManager: NSObject {
     private var pendingUnpair = false
     private var pendingClear = false
 
+    /// Взведён в willRestoreState, снят при первом же centralManagerDidUpdateState.
+    /// Нужен только чтобы не запускать beginScan() поверх уже идущего
+    /// восстановленного подключения — сам peripheral никогда не обнуляется
+    /// после дисконнекта (см. stop()/didDisconnectPeripheral), поэтому
+    /// гейтить beginScan() по `peripheral == nil` было бы неверно: это
+    /// заблокировало бы пересканирование навсегда после первого разрыва связи.
+    private var restoredPeripheralPending = false
+
     /// java.cpp: writeChar(..., 20) — минимальный интервал между записями
     private static let writeGap: TimeInterval = 0.020
     private var lastWrite = Date.distantPast
@@ -192,11 +200,21 @@ final class AidexBLEManager: NSObject {
         log("старт, SN=\(normalized), ключ \(sessionKey.isEmpty ? "отсутствует" : "сохранён")")
 
         if central == nil {
-            central = CBCentralManager(delegate: self, queue: .main)
+            // CBCentralManagerOptionRestoreIdentifierKey нужен, чтобы iOS
+            // могла перезапустить приложение по Bluetooth-событию, если
+            // процесс был выгружен из памяти в фоне. Без него BLE-транспорт
+            // "тихо умирает" через несколько часов в фоне, даже если
+            // providesBLEHeartbeat объявлен true. См. centralManager(_:willRestoreState:).
+            central = CBCentralManager(
+                delegate: self, queue: .main,
+                options: [CBCentralManagerOptionRestoreIdentifierKey: Self.restoreIdentifier]
+            )
         } else {
             beginScan()
         }
     }
+
+    private static let restoreIdentifier = "com.iaps.aidex.centralManager"
 
     func stop() {
         if let p = peripheral { central?.cancelPeripheralConnection(p) }
@@ -244,8 +262,13 @@ final class AidexBLEManager: NSObject {
 
     private func matches(name: String?) -> Bool {
         guard let name else { return false }
-        guard AidexBLE.namePrefixes.contains(where: { name.hasPrefix($0) }) else { return false }
-        return name.uppercased().hasSuffix(serialNumber)
+        // Сравниваем регистронезависимо целиком: и префикс, и серийник в
+        // суффиксе. Раньше префикс сверялся точным регистром ("AiDEX X-"),
+        // а суффикс — уже без учёта регистра; при другом реальном
+        // написании имени по Bluetooth сканирование могло не найти сенсор.
+        let upper = name.uppercased()
+        guard AidexBLE.namePrefixes.contains(where: { upper.hasPrefix($0.uppercased()) }) else { return false }
+        return upper.hasSuffix(serialNumber)
     }
 
     /// java.cpp: id2time() — starttime + patchState + id*60.
@@ -431,7 +454,11 @@ final class AidexBLEManager: NSObject {
         }
         lastAvailableID = max(lastAvailableID, id)
 
-        if id == 0, hasTime { return }
+        // java.cpp: if(!cur->minfromstart) — проверяется СЫРОЙ (несдвинутый)
+        // индекс с сенсора, а не абсолютный id. После перезапуска сенсора
+        // (indexShift != 0) эти два значения расходятся: абсолютный id==0
+        // почти никогда не наступит, а сырой в этом месте протокола — наступает.
+        if last.minutesFromStart == 0, hasTime { return }
 
         if !hasTime {
             writeEncrypted(AidexCommand.askStartTime)
@@ -675,11 +702,54 @@ extension AidexBLEManager: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         switch central.state {
         case .poweredOn:
-            beginScan()
+            // willRestoreState (если был) успевает отработать раньше первого
+            // вызова этого метода — не перебиваем восстановленное
+            // подключение свежим сканированием.
+            if restoredPeripheralPending {
+                restoredPeripheralPending = false
+            } else {
+                beginScan()
+            }
         case .poweredOff, .unauthorized, .unsupported:
             state = .bluetoothUnavailable
         default:
             break
+        }
+    }
+
+    /// Вызывается системой при перезапуске процесса по Bluetooth-событию
+    /// (см. CBCentralManagerOptionRestoreIdentifierKey в start()).
+    /// Обязателен, если центральный менеджер создан с restoreIdentifier —
+    /// иначе приложение падает.
+    ///
+    /// В отличие от AppGroupCGM (там достаточно пустой реализации — там BLE
+    /// используется только как heartbeat-триггер), у Aidex сами данные идут
+    /// через нотификации на восстановленном CBPeripheral, поэтому нужно
+    /// заново привязать delegate и переоткрыть характеристики — после
+    /// свежего запуска процесса charData/charPrivateUnbonded/charPrivateBonded
+    /// в этом экземпляре ещё не заполнены.
+    func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        log("восстановление состояния Bluetooth после перезапуска процесса")
+        guard let peripherals = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral],
+              let restored = peripherals.first
+        else { return }
+
+        restoredPeripheralPending = true
+        peripheral = restored
+        restored.delegate = self
+        clearCharacteristics()
+
+        switch restored.state {
+        case .connected:
+            state = .discoveringServices
+            restored.discoverServices([AidexBLE.service])
+        default:
+            // Отключено/отключается/подключается — по рекомендации Apple
+            // явно переподключаем именно этот CBPeripheral: центральный
+            // менеджер уже знает конкретное устройство, пересканировать эфир
+            // не нужно (и beginScan() пока не сработает — см. restoredPeripheralPending).
+            state = .connecting
+            central.connect(restored, options: nil)
         }
     }
 
