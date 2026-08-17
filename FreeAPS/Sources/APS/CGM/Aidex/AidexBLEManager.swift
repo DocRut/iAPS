@@ -147,6 +147,12 @@ final class AidexBLEManager: NSObject {
     private var pendingUnpair = false
     private var pendingClear = false
 
+    /// AidexXGattCallback: keywhenconnecting / java.cpp: aidexXstream::unbonded.
+    /// true, если в ТЕКУЩЕМ подключении сессионный ключ запрашивался заново
+    /// (не было сохранённого). Выставляется в didUpdateNotificationStateFor,
+    /// используется в handleDeviceInfo — см. её комментарий.
+    private var freshPairing = false
+
     /// Взведён в willRestoreState, снят при первом же centralManagerDidUpdateState.
     /// Нужен только чтобы не запускать beginScan() поверх уже идущего
     /// восстановленного подключения — сам peripheral никогда не обнуляется
@@ -425,7 +431,10 @@ final class AidexBLEManager: NSObject {
             writeEncrypted(AidexCommand.requestWriteTime)
             return
         case 0:
-            if hasTime {
+            // java.cpp: hasTime && !stream->unbonded — "быстрый" старт
+            // только на реконнекте с уже известным ключом, не на свежей
+            // привязке (даже если hasTime почему-то уже true).
+            if hasTime, !freshPairing {
                 writeEncrypted(AidexCommand.startLate)
                 return
             }
@@ -436,6 +445,19 @@ final class AidexBLEManager: NSObject {
     }
 
     /// java.cpp: onceOld() — одиночное историческое значение (LastPast).
+    ///
+    /// ИЗВЕСТНЫЙ ПРОБЕЛ: оригинал сверяет присланный id с sens->pollcount()
+    /// (сколько записей уже реально сохранено в локальном буфере сенсора) и
+    /// либо не сохраняет значение повторно, либо — если id заметно отстаёт
+    /// от pollcount() — сбрасывает hasTime, требуя повторной синхронизации
+    /// времени (защита от рассинхронизации после нештатной ситуации).
+    /// pollcount() — свойство внутреннего буфера SensorGlucoseData, которому
+    /// в этой архитектуре нет прямого аналога (тут нет истории "от нуля",
+    /// только lastReceivedID/lastAvailableID), так что честно повторить эту
+    /// проверку нельзя, не меняя модель хранения. Практическое следствие:
+    /// дубли отфильтровываются позже, через syncIdentifier в LoopKit при
+    /// сохранении в HealthKit, а не здесь; форсированный ресинк времени при
+    /// рассинхронизации — не выполняется.
     private func handleOnceOld(_ body: [UInt8]) {
         guard let last = AidexLastPast(body, at: 2) else {
             log("onceOld: пакет короче \(AidexLastPast.length + 2)")
@@ -537,6 +559,15 @@ final class AidexBLEManager: NSObject {
     }
 
     /// java.cpp: receiveLocalStarttime()
+    ///
+    /// ИЗВЕСТНЫЙ ПРОБЕЛ: оригинал (Android) в конце дополнительно проверяет
+    /// `unbonded && bondednow` — если сейчас идёт первая привязка И только
+    /// что завершился OS-уровневый BLE-bonding, ответ не отправляется,
+    /// ждём следующего триггера. Это часть двухфазного bonding-автомата
+    /// BluetoothGatt (AidexXGattCallback: onBondStateChanged/BOND_BONDED) —
+    /// у CoreBluetooth такого явного колбэка о завершении OS bonding нет,
+    /// шифрованные операции с характеристиками сами дожидаются его на
+    /// уровне системы. Поэтому здесь этот guard сознательно не воспроизведён.
     private func handleLocalStartTime(_ body: [UInt8]) {
         guard let local = AidexLocalTime(body, at: 2) else {
             log("localStartTime: пакет короче \(AidexLocalTime.length + 2)")
@@ -889,9 +920,11 @@ extension AidexBLEManager: CBPeripheralDelegate {
         guard characteristic.uuid == AidexBLE.charData else { return }
 
         if sessionKey.isEmpty {
+            freshPairing = true
             requestSessionKey()
         } else {
             // Ключ уже есть — обмен пропускаем (keywhenconnecting)
+            freshPairing = false
             log("используем сохранённый сессионный ключ")
             beginSession()
         }
