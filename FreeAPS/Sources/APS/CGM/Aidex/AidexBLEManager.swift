@@ -78,8 +78,14 @@ final class AidexBLEManager: NSObject {
 
     // MARK: Сохраняемое между сессиями
 
-    /// Сессионный ключ. Если он уже есть, при повторном подключении
-    /// обмен ключами пропускается (AidexXGattCallback: keywhenconnecting).
+    /// Мастер-ключ (java.cpp: keys[0]). Приходит НОТИФИКАЦИЕЙ на F001 после
+    /// записи askKey, сохраняется между подключениями (aidexXSaveKey).
+    /// Им расшифровывается сессионный ключ из F002.
+    private(set) var masterKey: [UInt8] = []
+
+    /// Сессионный ключ (java.cpp: keys[1]). НЕ сохраняется: при каждом
+    /// подключении сенсор выдаёт новый, зашифрованный мастер-ключом,
+    /// мы читаем его из F002 (aidexXstartCommand).
     private(set) var sessionKey: [UInt8] = []
 
     /// java.cpp: aidexXdat.hasTime
@@ -168,11 +174,11 @@ final class AidexBLEManager: NSObject {
     // MARK: - Публичный интерфейс
 
     /// Восстановление сессии между запусками приложения.
-    func restore(sessionKey key: [UInt8], hasTime time: Bool,
+    func restore(masterKey key: [UInt8], hasTime time: Bool,
                  baseStart base: Date?, secondsRemainder seconds: Int,
                  indexShift shift: Int, lastReceivedID lastID: Int)
     {
-        sessionKey = key
+        masterKey = key
         hasTime = time
         baseStart = base
         secondsRemainder = seconds
@@ -190,6 +196,7 @@ final class AidexBLEManager: NSObject {
 
         if normalized != serialNumber {
             // Новый сенсор — всё сбрасываем
+            masterKey = []
             sessionKey = []
             hasTime = false
             baseStart = nil
@@ -203,7 +210,7 @@ final class AidexBLEManager: NSObject {
         iv = AidexCrypto.makeIV(serial: normalized)
         askKey = AidexCrypto.askKey(serial: normalized)
 
-        log("старт, SN=\(normalized), ключ \(sessionKey.isEmpty ? "отсутствует" : "сохранён")")
+        log("старт, SN=\(normalized), мастер-ключ \(masterKey.isEmpty ? "отсутствует" : "сохранён")")
 
         if central == nil {
             // CBCentralManagerOptionRestoreIdentifierKey нужен, чтобы iOS
@@ -323,12 +330,18 @@ final class AidexBLEManager: NSObject {
     }
 
     /// java.cpp: aidexXstartCommand()
+    /// Расшифровка сессионного ключа идёт МАСТЕР-КЛЮЧОМ (keys[0], полученным
+    /// нотификацией на F001), а не askKey, который мы писали в F001.
     private func handleSessionKeyResponse(_ raw: [UInt8]) {
+        guard !masterKey.isEmpty else {
+            state = .failed("нет мастер-ключа для расшифровки сессионного ключа")
+            return
+        }
         guard raw.count == 17 else {
             state = .failed("ожидалось 17 байт ключа, получено \(raw.count)")
             return
         }
-        guard let plain = AidexCrypto.decrypt(raw, key: askKey, iv: iv), plain.count == 17 else {
+        guard let plain = AidexCrypto.decrypt(raw, key: masterKey, iv: iv), plain.count == 17 else {
             state = .failed("не удалось расшифровать сессионный ключ")
             return
         }
@@ -345,6 +358,19 @@ final class AidexBLEManager: NSObject {
         sessionKey = key
         log("сессионный ключ принят")
         beginSession()
+    }
+
+    /// java.cpp: aidexXSaveKey() — мастер-ключ приходит нотификацией на F001.
+    /// 16 байт. После сохранения читаем F002 (17 байт сессионного ключа).
+    private func handleMasterKey(_ raw: [UInt8]) {
+        guard raw.count == 16 else {
+            state = .failed("ожидалось 16 байт мастер-ключа, получено \(raw.count)")
+            return
+        }
+        masterKey = raw
+        log("мастер-ключ принят")
+        guard let charData else { return }
+        peripheral?.readValue(for: charData)
     }
 
     /// Начало рабочей сессии — общая точка для нового и сохранённого ключа.
@@ -407,6 +433,8 @@ final class AidexBLEManager: NSObject {
         case .clearOK:
             log("привязка сброшена")
             pendingClear = false
+            // java.cpp: clearSuccessful() — clearKey() стирает только мастер-ключ
+            masterKey = []
             sessionKey = []
             hasTime = false
             state = .unpaired
@@ -917,16 +945,30 @@ extension AidexBLEManager: CBPeripheralDelegate {
             log("нотификации \(characteristic.uuid) не включились: \(error!.localizedDescription)")
             return
         }
-        guard characteristic.uuid == AidexBLE.charData else { return }
 
-        if sessionKey.isEmpty {
-            freshPairing = true
+        switch characteristic.uuid {
+        case AidexBLE.charData:
+            // F002 — общий канал (и ключ, и данные). После включения нотификаций
+            // решаем, что дальше. AidexXGattCallback: keywhenconnecting.
+            if masterKey.isEmpty {
+                // Новая привязка: включаем нотификации F001, откуда придёт
+                // мастер-ключ, и только потом пишем askKey.
+                freshPairing = true
+                log("новая привязка — включаем нотификации F001")
+                guard let charPrivateUnbonded else { return }
+                peripheral.setNotifyValue(true, for: charPrivateUnbonded)
+            } else {
+                // Мастер-ключ сохранён: сразу читаем новый сессионный ключ из F002.
+                freshPairing = false
+                log("используем сохранённый мастер-ключ, читаем F002")
+                guard let charData else { return }
+                peripheral.readValue(for: charData)
+            }
+        case AidexBLE.charPrivateUnbonded:
+            // Нотификации F001 включены — отправляем askKey.
             requestSessionKey()
-        } else {
-            // Ключ уже есть — обмен пропускаем (keywhenconnecting)
-            freshPairing = false
-            log("используем сохранённый сессионный ключ")
-            beginSession()
+        default:
+            break
         }
     }
 
@@ -939,12 +981,8 @@ extension AidexBLEManager: CBPeripheralDelegate {
             log("ошибка записи \(characteristic.uuid): \(error.localizedDescription)")
             return
         }
-        // После записи askKey читаем F002 (AidexXGattCallback.onCharacteristicWrite)
-        if characteristic.uuid == AidexBLE.charPrivateUnbonded,
-           sessionKey.isEmpty, let charData
-        {
-            peripheral.readValue(for: charData)
-        }
+        // После записи askKey ничего не делаем: ждём нотификацию F001
+        // (мастер-ключ), она же инициирует чтение F002. См. handleMasterKey().
     }
 
     func peripheral(
@@ -962,6 +1000,8 @@ extension AidexBLEManager: CBPeripheralDelegate {
             } else {
                 handleDataNotification(raw)
             }
+        case AidexBLE.charPrivateUnbonded:
+            handleMasterKey(raw)
         case AidexBLE.charPrivateBonded:
             handleCurrentGlucose(raw)
         default:

@@ -19,8 +19,10 @@ public struct AidexCGMState: RawRepresentable, Equatable {
 
     public var serialNumber: String = ""
 
-    /// Сессионный ключ — чтобы не запрашивать заново при каждом подключении.
-    public var sessionKey: Data = .init()
+    /// Мастер-ключ (java.cpp: keys[0]) — сохраняется, чтобы не проходить
+    /// привязку askKey заново. Сессионный ключ не хранится: он новый на
+    /// каждом подключении и расшифровывается мастер-ключом.
+    public var masterKey: Data = .init()
 
     /// java.cpp: aidexXdat.hasTime
     public var hasTime: Bool = false
@@ -52,7 +54,7 @@ public struct AidexCGMState: RawRepresentable, Equatable {
 
     public init(rawValue: RawValue) {
         serialNumber   = rawValue["serialNumber"] as? String ?? ""
-        sessionKey     = rawValue["sessionKey"] as? Data ?? Data()
+        masterKey      = rawValue["masterKey"] as? Data ?? Data()
         hasTime        = rawValue["hasTime"] as? Bool ?? false
         baseStart        = rawValue["baseStart"] as? Date
         secondsRemainder = rawValue["secondsRemainder"] as? Int ?? 0
@@ -64,7 +66,7 @@ public struct AidexCGMState: RawRepresentable, Equatable {
     public var rawValue: RawValue {
         var raw: RawValue = [
             "serialNumber": serialNumber,
-            "sessionKey": sessionKey,
+            "masterKey": masterKey,
             "hasTime": hasTime,
             "secondsRemainder": secondsRemainder,
             "indexShift": indexShift,
@@ -141,7 +143,7 @@ public final class AidexCGMManager: CGMManager {
         let s = state
         guard !s.serialNumber.isEmpty else { return }
         ble.restore(
-            sessionKey: [UInt8](s.sessionKey),
+            masterKey: [UInt8](s.masterKey),
             hasTime: s.hasTime,
             baseStart: s.baseStart,
             secondsRemainder: s.secondsRemainder,
@@ -164,7 +166,7 @@ public final class AidexCGMManager: CGMManager {
             $0.serialNumber = normalized
             if isDifferent {
                 // Новый сенсор — сбрасываем всё
-                $0.sessionKey = Data()
+                $0.masterKey = Data()
                 $0.hasTime = false
                 $0.baseStart = nil
                 $0.secondsRemainder = 0
@@ -326,19 +328,19 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
     func aidex(didChangeState state: AidexBLEManager.SessionState) {
         sessionState = state
 
-        // Сохраняем сессионный ключ, как только он появился
-        if state == .running, !ble.sessionKey.isEmpty,
-           self.state.sessionKey != Data(ble.sessionKey)
+        // Сохраняем мастер-ключ, как только он появился
+        if state == .running, !ble.masterKey.isEmpty,
+           self.state.masterKey != Data(ble.masterKey)
         {
             mutateState {
-                $0.sessionKey = Data(ble.sessionKey)
+                $0.masterKey = Data(ble.masterKey)
                 $0.hasTime = ble.hasTime
             }
         }
 
         if state == .unpaired {
             mutateState {
-                $0.sessionKey = Data()
+                $0.masterKey = Data()
                 $0.hasTime = false
                 $0.baseStart = nil
                 $0.secondsRemainder = 0
