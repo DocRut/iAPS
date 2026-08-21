@@ -115,44 +115,76 @@ enum AidexCrypto {
     // IV мутируется внутри вызова, но в оригинале каждый раз берётся свежая
     // копия постоянного IV (iv_local), поэтому состояние между пакетами
     // НЕ переносится.
+    //
+    // CFB-128 реализован вручную поверх AES-ECB (шифрование), потому что
+    // встроенный kCCModeCFB из CommonCrypto даёт неверный хвостовой байт на
+    // неполном последнем блоке (17-байтный сессионный ключ): первые 16 байт
+    // корректны, 17-й — нет (CRC8 59 != 5A). Ручная реализация сверена с
+    // тест-векторами Juggluco (decrypt.cpp).
 
-    private static func aesCFB128(
+    /// AES-ECB шифрование одного 16-байтного блока (без паддинга).
+    private static func aesECBEncrypt(_ block: [UInt8], key: [UInt8]) -> [UInt8]? {
+        guard block.count == 16, key.count == 16 else { return nil }
+        var output = [UInt8](repeating: 0, count: 16)
+        var moved = 0
+        let status = block.withUnsafeBytes { blockPtr in
+            key.withUnsafeBytes { keyPtr in
+                output.withUnsafeMutableBytes { outPtr in
+                    CCCrypt(
+                        CCOperation(kCCEncrypt),
+                        CCAlgorithm(kCCAlgorithmAES),
+                        CCOptions(kCCOptionECBMode),
+                        keyPtr.baseAddress, key.count,
+                        nil,
+                        blockPtr.baseAddress, block.count,
+                        outPtr.baseAddress, output.count,
+                        &moved
+                    )
+                }
+            }
+        }
+        guard status == kCCSuccess, moved == 16 else { return nil }
+        return output
+    }
+
+    /// Полноблочный CFB-128 (как OpenSSL AES_cfb128_encrypt с num=0).
+    /// Ключевой поток: keystream = AES_encrypt(key, feedback), где
+    /// feedback — предыдущий блок ШИФРОТЕКСТА (для обоих направлений).
+    private static func cfb128(
         _ input: [UInt8],
         key: [UInt8],
         iv: [UInt8],
-        operation: Int
+        encrypt: Bool
     ) -> [UInt8]? {
         guard key.count == 16, iv.count == 16, !input.isEmpty else { return nil }
 
-        var cryptorRef: CCCryptorRef?
-        let createStatus = CCCryptorCreateWithMode(
-            CCOperation(operation),
-            CCMode(kCCModeCFB),
-            CCAlgorithm(kCCAlgorithmAES),
-            CCPadding(ccNoPadding),
-            iv, key, key.count,
-            nil, 0, 0,
-            CCModeOptions(0),
-            &cryptorRef
-        )
-        guard createStatus == kCCSuccess, let cryptor = cryptorRef else { return nil }
-        defer { CCCryptorRelease(cryptor) }
-
+        var feedback = iv
         var output = [UInt8](repeating: 0, count: input.count)
-        var moved = 0
-        let status = CCCryptorUpdate(
-            cryptor, input, input.count,
-            &output, output.count, &moved
-        )
-        guard status == kCCSuccess, moved == input.count else { return nil }
+        var offset = 0
+
+        while offset < input.count {
+            guard let keystream = aesECBEncrypt(feedback, key: key) else { return nil }
+            let n = min(16, input.count - offset)
+            for i in 0 ..< n {
+                output[offset + i] = input[offset + i] ^ keystream[i]
+            }
+            // Для полного блока feedback = шифротекст (при шифровании это
+            // output, при расшифровке — input). На неполном хвосте продолжения нет.
+            if n == 16 {
+                feedback = encrypt
+                    ? Array(output[offset ..< offset + 16])
+                    : Array(input[offset ..< offset + 16])
+            }
+            offset += n
+        }
         return output
     }
 
     static func decrypt(_ data: [UInt8], key: [UInt8], iv: [UInt8]) -> [UInt8]? {
-        aesCFB128(data, key: key, iv: iv, operation: kCCDecrypt)
+        cfb128(data, key: key, iv: iv, encrypt: false)
     }
 
     static func encrypt(_ data: [UInt8], key: [UInt8], iv: [UInt8]) -> [UInt8]? {
-        aesCFB128(data, key: key, iv: iv, operation: kCCEncrypt)
+        cfb128(data, key: key, iv: iv, encrypt: true)
     }
 }
