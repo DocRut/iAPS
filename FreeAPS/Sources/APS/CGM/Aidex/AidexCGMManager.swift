@@ -42,6 +42,10 @@ public struct AidexCGMState: RawRepresentable, Equatable {
     /// Срок жизни сенсора в днях (из deviceInfo)
     public var sensorLifeDays: Int = AidexBLE.defaultSensorLifetimeDays
 
+    /// Режим ежеминутных показаний: раз в минуту опрашиваем историю сенсора
+    /// (по умолчанию сенсор сам шлёт текущее значение каждые 5 минут).
+    public var minuteReadings: Bool = false
+
     /// java.cpp: getRestartTime() — фактическое начало текущего цикла сенсора
     public var effectiveStart: Date? {
         guard let baseStart else { return nil }
@@ -61,6 +65,7 @@ public struct AidexCGMState: RawRepresentable, Equatable {
         indexShift       = rawValue["indexShift"] as? Int ?? 0
         lastReceivedID   = rawValue["lastReceivedID"] as? Int ?? 0
         sensorLifeDays = rawValue["sensorLifeDays"] as? Int ?? AidexBLE.defaultSensorLifetimeDays
+        minuteReadings  = rawValue["minuteReadings"] as? Bool ?? false
     }
 
     public var rawValue: RawValue {
@@ -71,7 +76,8 @@ public struct AidexCGMState: RawRepresentable, Equatable {
             "secondsRemainder": secondsRemainder,
             "indexShift": indexShift,
             "lastReceivedID": lastReceivedID,
-            "sensorLifeDays": sensorLifeDays
+            "sensorLifeDays": sensorLifeDays,
+            "minuteReadings": minuteReadings
         ]
         if let baseStart { raw["baseStart"] = baseStart }
         return raw
@@ -150,12 +156,22 @@ public final class AidexCGMManager: CGMManager {
             indexShift: s.indexShift,
             lastReceivedID: s.lastReceivedID
         )
+        ble.setMinuteReadings(s.minuteReadings)
         ble.start(serialNumber: s.serialNumber)
     }
 
     // MARK: - Конфигурация
 
     public var serialNumber: String { state.serialNumber }
+
+    /// Режим ежеминутных показаний.
+    public var minuteReadings: Bool { state.minuteReadings }
+
+    public func setMinuteReadings(_ enabled: Bool) {
+        guard enabled != state.minuteReadings else { return }
+        mutateState { $0.minuteReadings = enabled }
+        ble.setMinuteReadings(enabled)
+    }
 
     /// Серийный номер — 10 символов с коробки сенсора.
     public func setSerialNumber(_ serial: String) {

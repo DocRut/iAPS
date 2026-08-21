@@ -171,7 +171,23 @@ final class AidexBLEManager: NSObject {
     private static let writeGap: TimeInterval = 0.020
     private var lastWrite = Date.distantPast
 
+    /// Интервал опроса истории в режиме ежеминутных показаний.
+    private static let pollInterval: TimeInterval = 60
+
+    /// Режим ежеминутных показаний: раз в минуту запрашиваем последний ID
+    /// на сенсоре (askLastID), после чего существующая машинерия истории
+    /// подтягивает новые поминутные записи.
+    private(set) var minuteReadings = false
+
+    /// Таймер опроса. Активен только когда minuteReadings == true.
+    private var pollTimer: Timer?
+
     // MARK: - Публичный интерфейс
+
+    func setMinuteReadings(_ enabled: Bool) {
+        minuteReadings = enabled
+        schedulePolling()
+    }
 
     /// Восстановление сессии между запусками приложения.
     func restore(masterKey key: [UInt8], hasTime time: Bool,
@@ -233,6 +249,8 @@ final class AidexBLEManager: NSObject {
         if let p = peripheral { central?.cancelPeripheralConnection(p) }
         central?.stopScan()
         clearCharacteristics()
+        pollTimer?.invalidate()
+        pollTimer = nil
         state = .idle
     }
 
@@ -383,6 +401,29 @@ final class AidexBLEManager: NSObject {
 
         // java.cpp: late = haskey && hasTime
         writeEncrypted(hasTime ? AidexCommand.startLate : AidexCommand.start)
+
+        // Запускаем (или перезапускаем) опрос в режиме ежеминутных показаний.
+        schedulePolling()
+    }
+
+    // MARK: Опрос для ежеминутных показаний
+
+    private func schedulePolling() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+        guard minuteReadings else { return }
+
+        let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
+            self?.pollLatest()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
+    }
+
+    private func pollLatest() {
+        guard case .running = state, !sessionKey.isEmpty, charData != nil else { return }
+        log("опрос: запрос последнего значения")
+        writeEncrypted(AidexCommand.askLastID)
     }
 
     // MARK: - Диспетчер ответов F002
