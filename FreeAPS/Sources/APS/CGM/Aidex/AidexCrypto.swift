@@ -126,6 +126,9 @@ enum AidexCrypto {
     private static func aesECBEncrypt(_ block: [UInt8], key: [UInt8]) -> [UInt8]? {
         guard block.count == 16, key.count == 16 else { return nil }
         var output = [UInt8](repeating: 0, count: 16)
+        let outputCount = output.count
+        let blockCount = block.count
+        let keyCount = key.count
         var moved = 0
         let status = block.withUnsafeBytes { blockPtr in
             key.withUnsafeBytes { keyPtr in
@@ -134,10 +137,10 @@ enum AidexCrypto {
                         CCOperation(kCCEncrypt),
                         CCAlgorithm(kCCAlgorithmAES),
                         CCOptions(kCCOptionECBMode),
-                        keyPtr.baseAddress, key.count,
+                        keyPtr.baseAddress, keyCount,
                         nil,
-                        blockPtr.baseAddress, block.count,
-                        outPtr.baseAddress, output.count,
+                        blockPtr.baseAddress, blockCount,
+                        outPtr.baseAddress, outputCount,
                         &moved
                     )
                 }
