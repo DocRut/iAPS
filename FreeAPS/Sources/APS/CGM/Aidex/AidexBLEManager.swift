@@ -46,6 +46,7 @@ protocol AidexBLEManagerDelegate: AnyObject {
     func aidex(didChangeState state: AidexBLEManager.SessionState)
     func aidex(didUpdateTimeModel model: AidexTimeModel)
     func aidex(didReceiveDeviceInfo info: AidexDeviceInfo)
+    func aidex(didUpdatePeripheralIdentifier id: String)
     func aidex(didLog message: String)
 }
 
@@ -182,6 +183,11 @@ final class AidexBLEManager: NSObject {
     /// Таймер опроса. Активен только когда minuteReadings == true.
     private var pollTimer: Timer?
 
+    /// UUID конкретного CBPeripheral (сохраняется между запусками), чтобы
+    /// переподключаться в фоне через retrievePeripherals, а не сканированием
+    /// (сканирование в фоне не находит сенсор).
+    private var peripheralIdentifier: String?
+
     // MARK: - Публичный интерфейс
 
     func setMinuteReadings(_ enabled: Bool) {
@@ -192,7 +198,8 @@ final class AidexBLEManager: NSObject {
     /// Восстановление сессии между запусками приложения.
     func restore(masterKey key: [UInt8], hasTime time: Bool,
                  baseStart base: Date?, secondsRemainder seconds: Int,
-                 indexShift shift: Int, lastReceivedID lastID: Int)
+                 indexShift shift: Int, lastReceivedID lastID: Int,
+                 peripheralIdentifier identifier: String?)
     {
         masterKey = key
         hasTime = time
@@ -200,6 +207,7 @@ final class AidexBLEManager: NSObject {
         secondsRemainder = seconds
         indexShift = shift
         lastReceivedID = lastID
+        peripheralIdentifier = identifier
     }
 
     /// serial — полный серийный номер, 10 символов (напр. "222225C99G").
@@ -220,6 +228,7 @@ final class AidexBLEManager: NSObject {
             indexShift = 0
             lastReceivedID = 0
             lastAvailableID = 0
+            peripheralIdentifier = nil
         }
 
         serialNumber = normalized
@@ -239,7 +248,7 @@ final class AidexBLEManager: NSObject {
                 options: [CBCentralManagerOptionRestoreIdentifierKey: Self.restoreIdentifier]
             )
         } else {
-            beginScan()
+            reconnectOrScan()
         }
     }
 
@@ -289,6 +298,42 @@ final class AidexBLEManager: NSObject {
         guard central?.state == .poweredOn, !serialNumber.isEmpty else { return }
         state = .scanning
         central?.scanForPeripherals(withServices: [AidexBLE.service], options: nil)
+    }
+
+    /// Переподключение в фоне: сначала пробуем известный сенсор по UUID
+    /// (retrievePeripherals + connect — работает в фоне), иначе сканируем.
+    private func reconnectOrScan() {
+        if !retrieveAndConnect() {
+            beginScan()
+        }
+    }
+
+    /// Переподключение к ранее сохранённому устройству по UUID.
+    /// Возвращает true, если периферия найдена и подключение начато.
+    @discardableResult
+    private func retrieveAndConnect() -> Bool {
+        guard let central, let id = peripheralIdentifier,
+              let uuid = UUID(uuidString: id)
+        else { return false }
+
+        let known = central.retrievePeripherals(withIdentifiers: [uuid])
+        guard let p = known.first else { return false }
+
+        log("переподключение к известному сенсору \(id)")
+        peripheral = p
+        p.delegate = self
+        state = .connecting
+        central.connect(p, options: nil)
+        return true
+    }
+
+    /// Запоминает UUID конкретной периферии, чтобы потом переподключаться
+    /// без сканирования.
+    private func rememberPeripheral(_ p: CBPeripheral) {
+        let id = p.identifier.uuidString
+        guard id != peripheralIdentifier else { return }
+        peripheralIdentifier = id
+        delegate?.aidex(didUpdatePeripheralIdentifier: id)
     }
 
     private func matches(name: String?) -> Bool {
@@ -808,7 +853,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
             if restoredPeripheralPending {
                 restoredPeripheralPending = false
             } else {
-                beginScan()
+                reconnectOrScan()
             }
         case .poweredOff, .unauthorized, .unsupported:
             state = .bluetoothUnavailable
@@ -872,6 +917,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
 
         self.peripheral = peripheral
         peripheral.delegate = self
+        rememberPeripheral(peripheral)
         state = .connecting
         central.connect(peripheral, options: nil)
     }
@@ -901,6 +947,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        rememberPeripheral(peripheral)
         state = .discoveringServices
         peripheral.discoverServices([AidexBLE.service])
     }
@@ -911,7 +958,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
         error: Error?
     ) {
         log("подключение не удалось: \(error?.localizedDescription ?? "-")")
-        beginScan()
+        reconnectOrScan()
     }
 
     func centralManager(
@@ -925,7 +972,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
         case .idle, .sensorEnded, .unpaired:
             break
         default:
-            beginScan()
+            reconnectOrScan()
         }
     }
 }

@@ -46,6 +46,10 @@ public struct AidexCGMState: RawRepresentable, Equatable {
     /// (по умолчанию сенсор сам шлёт текущее значение каждые 5 минут).
     public var minuteReadings: Bool = false
 
+    /// UUID конкретного BLE-устройства — для фонового переподключения
+    /// без сканирования (retrievePeripherals).
+    public var peripheralIdentifier: String?
+
     /// java.cpp: getRestartTime() — фактическое начало текущего цикла сенсора
     public var effectiveStart: Date? {
         guard let baseStart else { return nil }
@@ -66,6 +70,7 @@ public struct AidexCGMState: RawRepresentable, Equatable {
         lastReceivedID   = rawValue["lastReceivedID"] as? Int ?? 0
         sensorLifeDays = rawValue["sensorLifeDays"] as? Int ?? AidexBLE.defaultSensorLifetimeDays
         minuteReadings  = rawValue["minuteReadings"] as? Bool ?? false
+        peripheralIdentifier = rawValue["peripheralIdentifier"] as? String
     }
 
     public var rawValue: RawValue {
@@ -80,6 +85,7 @@ public struct AidexCGMState: RawRepresentable, Equatable {
             "minuteReadings": minuteReadings
         ]
         if let baseStart { raw["baseStart"] = baseStart }
+        if let peripheralIdentifier { raw["peripheralIdentifier"] = peripheralIdentifier }
         return raw
     }
 }
@@ -154,7 +160,8 @@ public final class AidexCGMManager: CGMManager {
             baseStart: s.baseStart,
             secondsRemainder: s.secondsRemainder,
             indexShift: s.indexShift,
-            lastReceivedID: s.lastReceivedID
+            lastReceivedID: s.lastReceivedID,
+            peripheralIdentifier: s.peripheralIdentifier
         )
         ble.setMinuteReadings(s.minuteReadings)
         ble.start(serialNumber: s.serialNumber)
@@ -382,6 +389,10 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
         if info.lifeDays > 0 {
             mutateState { $0.sensorLifeDays = Int(info.lifeDays) }
         }
+    }
+
+    func aidex(didUpdatePeripheralIdentifier id: String) {
+        mutateState { $0.peripheralIdentifier = id }
     }
 
     func aidex(didLog message: String) {
