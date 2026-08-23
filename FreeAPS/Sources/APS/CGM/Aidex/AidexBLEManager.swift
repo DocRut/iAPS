@@ -299,7 +299,11 @@ final class AidexBLEManager: NSObject {
     }
 
     private func log(_ message: String) {
-        delegate?.aidex(didLog: "Aidex: \(message)")
+        let full = "Aidex: \(message)"
+        // os_log(.debug) не виден в консоли Xcode — дублируем через NSLog,
+        // чтобы всегда видеть шаги BLE-сессии при отладке.
+        NSLog("%@", full)
+        delegate?.aidex(didLog: full)
     }
 
     private func beginScan() {
@@ -792,8 +796,13 @@ final class AidexBLEManager: NSObject {
     // java.cpp: aidexXprocessCurrentData() -> saveCurrent()
 
     private func handleCurrentGlucose(_ raw: [UInt8]) {
-        guard !sessionKey.isEmpty else { return }
+        log("F003: уведомление \(raw.count) байт")
+        guard !sessionKey.isEmpty else {
+            log("F003: нет сессионного ключа, пропуск")
+            return
+        }
         guard let plain = AidexCrypto.decrypt(raw, key: sessionKey, iv: iv), plain.count >= 4 else {
+            log("F003: не удалось расшифровать")
             return
         }
 
