@@ -172,8 +172,11 @@ final class AidexBLEManager: NSObject {
     private static let writeGap: TimeInterval = 0.020
     private var lastWrite = Date.distantPast
 
-    /// Интервал опроса истории в режиме ежеминутных показаний.
-    private static let pollInterval: TimeInterval = 60
+    /// Интервалы опроса истории. Сенсор НЕ шлёт текущее значение непрерывно —
+    /// он отдаёт историю по запросу, поэтому опрашиваем его и в обычном
+    /// режиме (раз в 5 минут), и в ежеминутном (раз в минуту).
+    private static let standardPollInterval: TimeInterval = 300
+    private static let minutePollInterval: TimeInterval = 60
 
     /// Режим ежеминутных показаний: раз в минуту запрашиваем последний ID
     /// на сенсоре (askLastID), после чего существующая машинерия истории
@@ -456,9 +459,9 @@ final class AidexBLEManager: NSObject {
     private func schedulePolling() {
         pollTimer?.invalidate()
         pollTimer = nil
-        guard minuteReadings else { return }
 
-        let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
+        let interval = minuteReadings ? Self.minutePollInterval : Self.standardPollInterval
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             self?.pollLatest()
         }
         RunLoop.main.add(timer, forMode: .common)
