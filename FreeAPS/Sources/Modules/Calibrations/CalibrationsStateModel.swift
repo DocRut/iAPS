@@ -42,7 +42,7 @@ extension Calibrations {
             }
 
             guard let lastGlucose = glucoseStorage.retrieveRaw().last,
-                  lastGlucose.dateString.addingTimeInterval(60 * 4.5) > Date(),
+                  lastGlucose.dateString.addingTimeInterval(60 * 6) > Date(),
                   let uncalibrated = lastGlucose.uncalibrated
             else {
                 info(.service, "Glucose is stale for calibration")
