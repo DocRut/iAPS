@@ -186,6 +186,10 @@ final class AidexBLEManager: NSObject {
     /// Таймер опроса. Активен только когда minuteReadings == true.
     private var pollTimer: Timer?
 
+    /// Таймаут обнаружения сервисов: если didDiscoverServices не пришёл,
+    /// переподключаемся (CoreBluetooth иногда "зависает" на discoverServices).
+    private var discoveryTimeoutWorkItem: DispatchWorkItem?
+
     /// UUID конкретного CBPeripheral (сохраняется между запусками), чтобы
     /// переподключаться в фоне через retrievePeripherals, а не сканированием
     /// (сканирование в фоне не находит сенсор).
@@ -263,6 +267,7 @@ final class AidexBLEManager: NSObject {
         clearCharacteristics()
         pollTimer?.invalidate()
         pollTimer = nil
+        cancelDiscoveryTimeout()
         state = .idle
     }
 
@@ -472,6 +477,28 @@ final class AidexBLEManager: NSObject {
         guard case .running = state, !sessionKey.isEmpty, charData != nil else { return }
         log("опрос: запрос последнего значения")
         writeEncrypted(AidexCommand.askLastID)
+    }
+
+    // MARK: Таймаут обнаружения сервисов
+
+    private func startDiscoveryTimeout() {
+        cancelDiscoveryTimeout()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard case .discoveringServices = self.state else { return }
+            self.log("таймаут обнаружения сервисов — переподключаюсь")
+            if let p = self.peripheral {
+                self.central?.cancelPeripheralConnection(p)
+            }
+            self.reconnectOrScan()
+        }
+        discoveryTimeoutWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: item)
+    }
+
+    private func cancelDiscoveryTimeout() {
+        discoveryTimeoutWorkItem?.cancel()
+        discoveryTimeoutWorkItem = nil
     }
 
     // MARK: - Диспетчер ответов F002
@@ -890,6 +917,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
         switch restored.state {
         case .connected:
             state = .discoveringServices
+            startDiscoveryTimeout()
             restored.discoverServices([AidexBLE.service])
         default:
             // Отключено/отключается/подключается — по рекомендации Apple
@@ -952,6 +980,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         rememberPeripheral(peripheral)
         state = .discoveringServices
+        startDiscoveryTimeout()
         peripheral.discoverServices([AidexBLE.service])
     }
 
@@ -985,6 +1014,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
 extension AidexBLEManager: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        cancelDiscoveryTimeout()
         guard error == nil,
               let service = peripheral.services?.first(where: { $0.uuid == AidexBLE.service })
         else {
