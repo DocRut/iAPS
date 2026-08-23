@@ -4,6 +4,7 @@
 //  Шаблон: AppGroupCGM+UI.swift (iAPS v8.0.4)
 //
 
+import Combine
 import Foundation
 import LoopKit
 import LoopKitUI
@@ -173,6 +174,9 @@ public struct AidexSettingsView: View {
     @State private var showUnpairConfirm = false
     @State private var showClearConfirm = false
     @State private var showDeleteConfirm = false
+    @State private var logText = ""
+
+    private let logRefreshTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     init(manager: AidexCGMManager) {
         self.manager = manager
@@ -231,6 +235,13 @@ public struct AidexSettingsView: View {
                 Text(manager.debugDescription)
                     .font(.system(.footnote, design: .monospaced))
                     .foregroundColor(.secondary)
+
+                if !logText.isEmpty {
+                    Text(logText)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+                }
             }
 
             Section {
@@ -298,5 +309,8 @@ public struct AidexSettingsView: View {
             }
         }
         .onAppear { serial = manager.serialNumber }
+        .onReceive(logRefreshTimer) { _ in
+            logText = manager.logHistory.reversed().joined(separator: "\n")
+        }
     }
 }

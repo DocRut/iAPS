@@ -138,6 +138,9 @@ public final class AidexCGMManager: CGMManager {
     private var sessionState: AidexBLEManager.SessionState = .idle
     private var deviceInfo: AidexDeviceInfo?
 
+    /// Кольцевой буфер последних BLE-событий для показа в настройках.
+    private(set) var logHistory: [String] = []
+
     // MARK: - Инициализация
 
     public init() {
@@ -396,6 +399,10 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
     }
 
     func aidex(didLog message: String) {
+        logHistory.append(message)
+        if logHistory.count > 200 {
+            logHistory.removeFirst(logHistory.count - 200)
+        }
         debug(.deviceManager, message)
     }
 }
