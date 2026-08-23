@@ -850,10 +850,13 @@ final class AidexBLEManager: NSObject {
         let id = absoluteID(Int(current.minutesFromStart))
         var timestamp = date(forID: id)
 
-        // java.cpp: eventtime не должен быть в будущем более чем на 30 с
+        // java.cpp: eventtime не должен быть в будущем более чем на 30 с.
+        // Но сенсор стартует в произвольную секунду (здесь :53), поэтому его
+        // минутные отметки систематически "в будущем" на ~50 с. Прижимаем
+        // такое значение к "сейчас", отбрасываем только явно неверное (>5 мин).
         let now = Date()
         if timestamp > now {
-            guard timestamp.timeIntervalSince(now) <= 30 else {
+            guard timestamp.timeIntervalSince(now) <= 300 else {
                 log("F003: метка времени в будущем (\(timestamp)), отброшено")
                 return
             }
