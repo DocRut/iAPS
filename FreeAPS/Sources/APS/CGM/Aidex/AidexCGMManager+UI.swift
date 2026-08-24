@@ -175,6 +175,7 @@ public struct AidexSettingsView: View {
     @State private var showClearConfirm = false
     @State private var showDeleteConfirm = false
     @State private var logText = ""
+    @State private var showLog = false
     @State private var searchResults: [AidexDiscoveredSensor] = []
 
     private let logRefreshTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -271,11 +272,13 @@ public struct AidexSettingsView: View {
                     .foregroundColor(.secondary)
 
                 if !logText.isEmpty {
-                    DisclosureGroup("Журнал BLE") {
+                    DisclosureGroup(isExpanded: $showLog) {
                         Text(logText)
                             .font(.system(.caption2, design: .monospaced))
                             .foregroundColor(.secondary)
                             .textSelection(.enabled)
+                    } label: {
+                        Text("Журнал BLE")
                     }
                 }
             }
