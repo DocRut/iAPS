@@ -291,6 +291,10 @@ public struct AidexSettingsView: View {
             }
 
             Section {
+                Button("Переподключить сенсор") {
+                    manager.reconnect()
+                }
+
                 Button("Отвязать сенсор от телефона", role: .destructive) {
                     showUnpairConfirm = true
                 }

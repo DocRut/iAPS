@@ -207,6 +207,11 @@ public final class AidexCGMManager: CGMManager {
         ble.stop()
     }
 
+    /// Ручное переподключение к сенсору (если соединение не восстановилось само).
+    public func reconnect() {
+        ble.reconnect()
+    }
+
     /// Поиск сенсора: сканирует BLE и наполняет discoveredSensors.
     public func startSearch() {
         discoveredSensors = []

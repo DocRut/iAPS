@@ -284,6 +284,9 @@ final class AidexBLEManager: NSObject {
         charData = nil
         charPrivateUnbonded = nil
         charPrivateBonded = nil
+        // Сессионный ключ действует только до разрыва: при переподключении
+        // сенсор выдаёт новый (расшифровывается мастер-ключом из F002).
+        sessionKey = []
     }
 
     private func log(_ message: String) {
@@ -305,6 +308,18 @@ final class AidexBLEManager: NSObject {
     private func reconnectOrScan() {
         if !retrieveAndConnect() {
             beginScan()
+        }
+    }
+
+    /// Ручное переподключение: рвём текущее соединение (если есть) и
+    /// запускаем переподключение заново.
+    func reconnect() {
+        log("ручное переподключение")
+        central?.stopScan()
+        if let p = peripheral {
+            central?.cancelPeripheralConnection(p)
+        } else {
+            reconnectOrScan()
         }
     }
 

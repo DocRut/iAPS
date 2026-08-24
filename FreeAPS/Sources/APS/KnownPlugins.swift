@@ -37,6 +37,9 @@ enum KnownPlugins {
         case G7CGMManager.pluginIdentifier: 10.5 * secondsOfDay
         case LibreTransmitterManagerV3.pluginIdentifier: libreExpirationSeconds
         case MinimedPumpManager.pluginIdentifier: 6 * secondsOfDay
+        case AidexCGMManager.pluginIdentifier:
+            return (cgmManager as? AidexCGMManager)?.sensorExpiration?
+                .timeIntervalSince((cgmManager as? AidexCGMManager)?.sensorStartDate ?? Date())
         default: nil
         }
     }
@@ -58,6 +61,8 @@ enum KnownPlugins {
             return (cgmManager as? G7CGMManager)?.sensorFinishesWarmupAt
         case LibreTransmitterManagerV3.pluginIdentifier:
             return (cgmManager as? LibreTransmitterManagerV3)?.sensorInfoObservable.activatedAt
+        case AidexCGMManager.pluginIdentifier:
+            return (cgmManager as? AidexCGMManager)?.sensorStartDate
         default:
             return nil
         }
