@@ -175,7 +175,6 @@ public struct AidexSettingsView: View {
     @State private var showClearConfirm = false
     @State private var showDeleteConfirm = false
     @State private var logText = ""
-    @State private var showLog = false
     @State private var searchResults: [AidexDiscoveredSensor] = []
 
     private let logRefreshTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -209,8 +208,8 @@ public struct AidexSettingsView: View {
             }
 
             if !searchResults.isEmpty {
-                Section("Найденные сенсоры") {
-                    ForEach(searchResults, id: \.serial) { sensor in
+                Section {
+                    ForEach(searchResults) { sensor in
                         Button {
                             serial = sensor.serial
                             manager.stopSearch()
@@ -231,7 +230,7 @@ public struct AidexSettingsView: View {
                         }
                     }
                 } header: {
-                    Text("Найдено: \(searchResults.count)")
+                    Text("Найдено сенсоров: \(searchResults.count)")
                 } footer: {
                     Text("Нажми на сенсор, чтобы подключиться к нему.")
                 }
@@ -257,22 +256,10 @@ public struct AidexSettingsView: View {
                     .foregroundColor(.secondary)
 
                 if !logText.isEmpty {
-                    Button {
-                        showLog.toggle()
-                    } label: {
-                        HStack {
-                            Text("Журнал BLE")
-                            Spacer()
-                            Image(systemName: showLog ? "chevron.up" : "chevron.down")
-                        }
-                    }
-
-                    if showLog {
-                        Text(logText)
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .textSelection(.enabled)
-                    }
+                    Text(logText)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
                 }
             }
 
@@ -342,7 +329,7 @@ public struct AidexSettingsView: View {
         }
         .onAppear { serial = manager.serialNumber }
         .onReceive(logRefreshTimer) { _ in
-            logText = manager.logHistory.reversed().joined(separator: "\n")
+            logText = manager.logHistory.suffix(3).reversed().joined(separator: "\n")
             searchResults = manager.discoveredSensors
         }
     }
