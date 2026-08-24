@@ -177,6 +177,7 @@ public struct AidexSettingsView: View {
     @State private var logText = ""
     @State private var fullLogText = ""
     @State private var showFullLog = false
+    @State private var searching = false
     @State private var searchResults: [AidexDiscoveredSensor] = []
 
     private let logRefreshTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -202,6 +203,12 @@ public struct AidexSettingsView: View {
 
                 Button("Найти сенсор") {
                     manager.startSearch()
+                }
+
+                if searching, searchResults.isEmpty {
+                    Text("Поиск сенсора…")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
                 }
             } header: {
                 Text("Серийный номер")
@@ -347,6 +354,7 @@ public struct AidexSettingsView: View {
         .onReceive(logRefreshTimer) { _ in
             logText = manager.logHistory.suffix(3).reversed().joined(separator: "\n")
             fullLogText = manager.logHistory.reversed().joined(separator: "\n")
+            searching = manager.isSearching
             searchResults = manager.discoveredSensors
         }
     }

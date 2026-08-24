@@ -350,17 +350,20 @@ final class AidexBLEManager: NSObject {
 
     // MARK: Поиск сенсора
 
-    private var searching = false
+    private(set) var searching = false
 
     /// Сканирует эфир и сообщает найденные сенсоры через делегата,
     /// НЕ подключаясь к ним. Остановить через stopSearch().
+    /// Подключённый сенсор не рекламирует себя, поэтому в результатах
+    /// появляются только НОВЫЕ (неподключённые) сенсоры.
     func startSearch() {
         guard central?.state == .poweredOn else {
             log("поиск: Bluetooth недоступен")
             return
         }
         searching = true
-        state = .scanning
+        // Не трогаем состояние работающей сессии — просто сканируем поверх.
+        if case .running = state {} else { state = .scanning }
         central?.scanForPeripherals(withServices: [AidexBLE.service], options: nil)
         log("поиск сенсора: сканирование начато")
     }
@@ -368,6 +371,7 @@ final class AidexBLEManager: NSObject {
     func stopSearch() {
         searching = false
         central?.stopScan()
+        if case .scanning = state { state = .idle }
     }
 
     /// java.cpp: id2time() — starttime + patchState + id*60.

@@ -217,6 +217,8 @@ public final class AidexCGMManager: CGMManager {
         ble.stopSearch()
     }
 
+    public var isSearching: Bool { ble.searching }
+
     /// Отвязать сенсор от телефона.
     public func unpairSensor() {
         ble.unpairSensor()
