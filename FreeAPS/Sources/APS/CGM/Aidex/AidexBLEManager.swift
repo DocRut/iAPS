@@ -47,6 +47,7 @@ protocol AidexBLEManagerDelegate: AnyObject {
     func aidex(didUpdateTimeModel model: AidexTimeModel)
     func aidex(didReceiveDeviceInfo info: AidexDeviceInfo)
     func aidex(didUpdatePeripheralIdentifier id: String)
+    func aidex(didDiscoverSensor name: String, serial: String, rssi: Int)
     func aidex(didLog message: String)
 }
 
@@ -348,14 +349,37 @@ final class AidexBLEManager: NSObject {
     }
 
     private func matches(name: String?) -> Bool {
+        guard let name, matchesPrefix(name) else { return false }
+        return name.uppercased().hasSuffix(serialNumber)
+    }
+
+    /// Имя устройства начинается с известного префикса сенсора Aidex.
+    private func matchesPrefix(_ name: String?) -> Bool {
         guard let name else { return false }
-        // Сравниваем регистронезависимо целиком: и префикс, и серийник в
-        // суффиксе. Раньше префикс сверялся точным регистром ("AiDEX X-"),
-        // а суффикс — уже без учёта регистра; при другом реальном
-        // написании имени по Bluetooth сканирование могло не найти сенсор.
         let upper = name.uppercased()
-        guard AidexBLE.namePrefixes.contains(where: { upper.hasPrefix($0.uppercased()) }) else { return false }
-        return upper.hasSuffix(serialNumber)
+        return AidexBLE.namePrefixes.contains { upper.hasPrefix($0.uppercased()) }
+    }
+
+    // MARK: Поиск сенсора
+
+    private var searching = false
+
+    /// Сканирует эфир и сообщает найденные сенсоры через делегата,
+    /// НЕ подключаясь к ним. Остановить через stopSearch().
+    func startSearch() {
+        guard central?.state == .poweredOn else {
+            log("поиск: Bluetooth недоступен")
+            return
+        }
+        searching = true
+        state = .scanning
+        central?.scanForPeripherals(withServices: [AidexBLE.service], options: nil)
+        log("поиск сенсора: сканирование начато")
+    }
+
+    func stopSearch() {
+        searching = false
+        central?.stopScan()
     }
 
     /// java.cpp: id2time() — starttime + patchState + id*60.
@@ -943,6 +967,16 @@ extension AidexBLEManager: CBCentralManagerDelegate {
         rssi RSSI: NSNumber
     ) {
         let advName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
+        let name = peripheral.name ?? advName
+
+        // Режим поиска: сообщаем найденные сенсоры, не подключаясь.
+        if searching {
+            guard let name, matchesPrefix(name) else { return }
+            let serial = String(name.suffix(10))
+            delegate?.aidex(didDiscoverSensor: name, serial: serial, rssi: RSSI.intValue)
+            return
+        }
+
         guard matches(name: peripheral.name) || matches(name: advName) else { return }
 
         // Попутно можно вытащить глюкозу прямо из рекламы (пассивный канал)
@@ -950,7 +984,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
             parseAdvertisement([UInt8](mfg))
         }
 
-        log("найден \(peripheral.name ?? advName ?? "?") RSSI=\(RSSI)")
+        log("найден \(name ?? "?") RSSI=\(RSSI)")
         central.stopScan()
 
         self.peripheral = peripheral
