@@ -38,8 +38,9 @@ enum KnownPlugins {
         case LibreTransmitterManagerV3.pluginIdentifier: libreExpirationSeconds
         case MinimedPumpManager.pluginIdentifier: 6 * secondsOfDay
         case AidexCGMManager.pluginIdentifier:
-            return (cgmManager as? AidexCGMManager)?.sensorExpiration?
-                .timeIntervalSince((cgmManager as? AidexCGMManager)?.sensorStartDate ?? Date())
+            (cgmManager as? AidexCGMManager).flatMap {
+                $0.sensorExpiration?.timeIntervalSince($0.sensorStartDate ?? Date())
+            }
         default: nil
         }
     }
