@@ -175,6 +175,8 @@ public struct AidexSettingsView: View {
     @State private var showClearConfirm = false
     @State private var showDeleteConfirm = false
     @State private var logText = ""
+    @State private var fullLogText = ""
+    @State private var showFullLog = false
     @State private var searchResults: [AidexDiscoveredSensor] = []
 
     private let logRefreshTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -260,6 +262,20 @@ public struct AidexSettingsView: View {
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundColor(.secondary)
                         .textSelection(.enabled)
+
+                    Button(showFullLog ? "Скрыть журнал" : "Показать весь журнал") {
+                        showFullLog.toggle()
+                    }
+
+                    if showFullLog {
+                        ScrollView {
+                            Text(fullLogText)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxHeight: 300)
+                    }
                 }
             }
 
@@ -330,6 +346,7 @@ public struct AidexSettingsView: View {
         .onAppear { serial = manager.serialNumber }
         .onReceive(logRefreshTimer) { _ in
             logText = manager.logHistory.suffix(3).reversed().joined(separator: "\n")
+            fullLogText = manager.logHistory.reversed().joined(separator: "\n")
             searchResults = manager.discoveredSensors
         }
     }
