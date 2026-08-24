@@ -251,21 +251,6 @@ public struct AidexSettingsView: View {
                 }
             }
 
-            Section {
-                Toggle("Ежеминутные показания", isOn: Binding(
-                    get: { manager.minuteReadings },
-                    set: { manager.setMinuteReadings($0) }
-                ))
-            } header: {
-                Text("Частота показаний")
-            } footer: {
-                Text("""
-                Сенсор отдаёт историю по запросу: в обычном режиме iAPS \
-                опрашивает его каждые 5 минут, а при включении этого режима — \
-                каждую минуту, получая ежеминутные значения глюкозы.
-                """)
-            }
-
             Section("Диагностика") {
                 Text(manager.debugDescription)
                     .font(.system(.footnote, design: .monospaced))

@@ -173,17 +173,10 @@ final class AidexBLEManager: NSObject {
     private static let writeGap: TimeInterval = 0.020
     private var lastWrite = Date.distantPast
 
-    /// Интервалы опроса истории. В обычном режиме опрашиваем раз в 5 минут
-    /// (меньше расход батареи), в ежеминутном — раз в минуту.
-    private static let standardPollInterval: TimeInterval = 300
-    private static let minutePollInterval: TimeInterval = 60
+    /// Интервал опроса истории — раз в минуту.
+    private static let pollInterval: TimeInterval = 60
 
-    /// Режим ежеминутных показаний: раз в минуту запрашиваем последний ID
-    /// на сенсоре (askLastID), после чего существующая машинерия истории
-    /// подтягивает новые поминутные записи.
-    private(set) var minuteReadings = false
-
-    /// Таймер опроса. Активен только когда minuteReadings == true.
+    /// Таймер опроса истории.
     private var pollTimer: Timer?
 
     /// Таймаут обнаружения сервисов: если didDiscoverServices не пришёл,
@@ -196,11 +189,6 @@ final class AidexBLEManager: NSObject {
     private var peripheralIdentifier: String?
 
     // MARK: - Публичный интерфейс
-
-    func setMinuteReadings(_ enabled: Bool) {
-        minuteReadings = enabled
-        schedulePolling()
-    }
 
     /// Восстановление сессии между запусками приложения.
     func restore(masterKey key: [UInt8], hasTime time: Bool,
@@ -486,14 +474,13 @@ final class AidexBLEManager: NSObject {
         schedulePolling()
     }
 
-    // MARK: Опрос для ежеминутных показаний
+    // MARK: Опрос истории
 
     private func schedulePolling() {
         pollTimer?.invalidate()
         pollTimer = nil
 
-        let interval = minuteReadings ? Self.minutePollInterval : Self.standardPollInterval
-        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             self?.pollLatest()
         }
         RunLoop.main.add(timer, forMode: .common)

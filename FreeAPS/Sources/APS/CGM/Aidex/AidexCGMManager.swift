@@ -42,10 +42,6 @@ public struct AidexCGMState: RawRepresentable, Equatable {
     /// Срок жизни сенсора в днях (из deviceInfo)
     public var sensorLifeDays: Int = AidexBLE.defaultSensorLifetimeDays
 
-    /// Режим ежеминутных показаний: раз в минуту опрашиваем историю сенсора
-    /// (по умолчанию сенсор сам шлёт текущее значение каждые 5 минут).
-    public var minuteReadings: Bool = false
-
     /// UUID конкретного BLE-устройства — для фонового переподключения
     /// без сканирования (retrievePeripherals).
     public var peripheralIdentifier: String?
@@ -69,7 +65,6 @@ public struct AidexCGMState: RawRepresentable, Equatable {
         indexShift       = rawValue["indexShift"] as? Int ?? 0
         lastReceivedID   = rawValue["lastReceivedID"] as? Int ?? 0
         sensorLifeDays = rawValue["sensorLifeDays"] as? Int ?? AidexBLE.defaultSensorLifetimeDays
-        minuteReadings  = rawValue["minuteReadings"] as? Bool ?? false
         peripheralIdentifier = rawValue["peripheralIdentifier"] as? String
     }
 
@@ -81,8 +76,7 @@ public struct AidexCGMState: RawRepresentable, Equatable {
             "secondsRemainder": secondsRemainder,
             "indexShift": indexShift,
             "lastReceivedID": lastReceivedID,
-            "sensorLifeDays": sensorLifeDays,
-            "minuteReadings": minuteReadings
+            "sensorLifeDays": sensorLifeDays
         ]
         if let baseStart { raw["baseStart"] = baseStart }
         if let peripheralIdentifier { raw["peripheralIdentifier"] = peripheralIdentifier }
@@ -177,22 +171,12 @@ public final class AidexCGMManager: CGMManager {
             lastReceivedID: s.lastReceivedID,
             peripheralIdentifier: s.peripheralIdentifier
         )
-        ble.setMinuteReadings(s.minuteReadings)
         ble.start(serialNumber: s.serialNumber)
     }
 
     // MARK: - Конфигурация
 
     public var serialNumber: String { state.serialNumber }
-
-    /// Режим ежеминутных показаний.
-    public var minuteReadings: Bool { state.minuteReadings }
-
-    public func setMinuteReadings(_ enabled: Bool) {
-        guard enabled != state.minuteReadings else { return }
-        mutateState { $0.minuteReadings = enabled }
-        ble.setMinuteReadings(enabled)
-    }
 
     /// Серийный номер — 10 символов с коробки сенсора.
     public func setSerialNumber(_ serial: String) {
@@ -262,14 +246,19 @@ public final class AidexCGMManager: CGMManager {
 
     public var managedDataInterval: TimeInterval? { nil }
 
+    /// Дольше этого срока без свежего значения данные считаются устаревшими.
+    private static let staleThreshold: TimeInterval = 15 * 60
+
     public var glucoseDisplay: GlucoseDisplayable? {
         guard let sample = latestSample else { return nil }
-        return AidexGlucoseDisplay(sample: sample, isValid: sessionState == .running)
+        let fresh = Date().timeIntervalSince(sample.date) < Self.staleThreshold
+        return AidexGlucoseDisplay(sample: sample, isValid: sessionState == .running && fresh)
     }
 
     public var cgmManagerStatus: CGMManagerStatus {
-        CGMManagerStatus(
-            hasValidSensorSession: !state.serialNumber.isEmpty && sessionState == .running,
+        let fresh = latestSample.map { Date().timeIntervalSince($0.date) < Self.staleThreshold } ?? false
+        return CGMManagerStatus(
+            hasValidSensorSession: !state.serialNumber.isEmpty && sessionState == .running && fresh,
             device: device
         )
     }
