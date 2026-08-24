@@ -257,13 +257,21 @@ public struct AidexSettingsView: View {
                     .foregroundColor(.secondary)
 
                 if !logText.isEmpty {
-                    DisclosureGroup(isExpanded: $showLog) {
+                    Button {
+                        showLog.toggle()
+                    } label: {
+                        HStack {
+                            Text("Журнал BLE")
+                            Spacer()
+                            Image(systemName: showLog ? "chevron.up" : "chevron.down")
+                        }
+                    }
+
+                    if showLog {
                         Text(logText)
                             .font(.system(.caption2, design: .monospaced))
                             .foregroundColor(.secondary)
                             .textSelection(.enabled)
-                    } label: {
-                        Text("Журнал BLE")
                     }
                 }
             }
