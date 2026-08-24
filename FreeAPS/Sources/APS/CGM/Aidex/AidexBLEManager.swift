@@ -352,6 +352,9 @@ final class AidexBLEManager: NSObject {
 
     private(set) var searching = false
 
+    /// Таймер авто-остановки поиска (чтобы сканирование не шло вечно).
+    private var searchTimeoutWorkItem: DispatchWorkItem?
+
     /// Сканирует эфир и сообщает найденные сенсоры через делегата,
     /// НЕ подключаясь к ним. Остановить через stopSearch().
     /// Подключённый сенсор не рекламирует себя, поэтому в результатах
@@ -366,11 +369,21 @@ final class AidexBLEManager: NSObject {
         if case .running = state {} else { state = .scanning }
         central?.scanForPeripherals(withServices: [AidexBLE.service], options: nil)
         log("поиск сенсора: сканирование начато")
+
+        searchTimeoutWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.log("поиск сенсора: таймаут, останавливаю")
+            self?.stopSearch()
+        }
+        searchTimeoutWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: item)
     }
 
     func stopSearch() {
         searching = false
         central?.stopScan()
+        searchTimeoutWorkItem?.cancel()
+        searchTimeoutWorkItem = nil
         if case .scanning = state { state = .idle }
     }
 

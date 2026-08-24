@@ -201,8 +201,12 @@ public struct AidexSettingsView: View {
                 }
                 .disabled(!serialIsValid || serial == manager.serialNumber)
 
-                Button("Найти сенсор") {
-                    manager.startSearch()
+                Button(searching ? "Остановить поиск" : "Найти сенсор") {
+                    if searching {
+                        manager.stopSearch()
+                    } else {
+                        manager.startSearch()
+                    }
                 }
 
                 if searching, searchResults.isEmpty {
@@ -351,6 +355,7 @@ public struct AidexSettingsView: View {
             }
         }
         .onAppear { serial = manager.serialNumber }
+        .onDisappear { manager.stopSearch() }
         .onReceive(logRefreshTimer) { _ in
             logText = manager.logHistory.suffix(3).reversed().joined(separator: "\n")
             fullLogText = manager.logHistory.reversed().joined(separator: "\n")
