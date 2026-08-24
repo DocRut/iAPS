@@ -271,10 +271,12 @@ public struct AidexSettingsView: View {
                     .foregroundColor(.secondary)
 
                 if !logText.isEmpty {
-                    Text(logText)
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundColor(.secondary)
-                        .textSelection(.enabled)
+                    DisclosureGroup("Журнал BLE") {
+                        Text(logText)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .textSelection(.enabled)
+                    }
                 }
             }
 
