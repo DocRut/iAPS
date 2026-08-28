@@ -890,16 +890,11 @@ final class AidexBLEManager: NSObject {
 
         // java.cpp:835 — siAddedIndex(cur->minfromstart)
         let id = absoluteID(Int(current.minutesFromStart))
-        var timestamp = date(forID: id)
-
-        // Сенсор измеряет на границах своей минуты (старт в произвольную секунду,
-        // напр. :53), поэтому метка текущего значения F003 систематически на
-        // ~0–60 с в будущем относительно часов телефона. Это текущее показание,
-        // поэтому просто прижимаем его к «сейчас», а не отбрасываем.
-        let now = Date()
-        if timestamp > now {
-            timestamp = now
-        }
+        // Используем ТУ ЖЕ метку сенсора, что и история (без прижатия к «сейчас»).
+        // Прижатие F003 к телефонным часам даёт метку в ~7 с от последней записи
+        // истории, и 45-секундная дедупликация в GlucoseStorage выбрасывает
+        // текущее показание — на экране оно «зависает».
+        let timestamp = date(forID: id)
 
         lastReceivedID = max(lastReceivedID, id)
         lastAvailableID = max(lastAvailableID, id)
