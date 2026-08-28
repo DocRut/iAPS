@@ -177,8 +177,6 @@ public struct AidexSettingsView: View {
     @State private var logText = ""
     @State private var fullLogText = ""
     @State private var showFullLog = false
-    @State private var searching = false
-    @State private var searchResults: [AidexDiscoveredSensor] = []
 
     private let logRefreshTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -200,53 +198,10 @@ public struct AidexSettingsView: View {
                     manager.setSerialNumber(serial)
                 }
                 .disabled(!serialIsValid || serial == manager.serialNumber)
-
-                Button(searching ? "Остановить поиск" : "Найти сенсор") {
-                    if searching {
-                        manager.stopSearch()
-                    } else {
-                        manager.startSearch()
-                    }
-                }
-
-                if searching, searchResults.isEmpty {
-                    Text("Поиск сенсора…")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                }
             } header: {
                 Text("Серийный номер")
             } footer: {
                 Text("10 символов с коробки сенсора. Тот же номер стоит в имени устройства Bluetooth: AiDEX X-…")
-            }
-
-            if !searchResults.isEmpty {
-                Section {
-                    ForEach(searchResults) { sensor in
-                        Button {
-                            serial = sensor.serial
-                            manager.stopSearch()
-                            manager.setSerialNumber(sensor.serial)
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(sensor.name)
-                                        .foregroundColor(.primary)
-                                    Text(sensor.serial)
-                                        .font(.system(.caption, design: .monospaced))
-                                        .foregroundColor(.secondary)
-                                }
-                                Spacer()
-                                Text("\(sensor.rssi) dBm")
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Найдено сенсоров: \(searchResults.count)")
-                } footer: {
-                    Text("Нажми на сенсор, чтобы подключиться к нему.")
-                }
             }
 
             if let start = manager.sensorStartDate {
@@ -359,12 +314,9 @@ public struct AidexSettingsView: View {
             }
         }
         .onAppear { serial = manager.serialNumber }
-        .onDisappear { manager.stopSearch() }
         .onReceive(logRefreshTimer) { _ in
             logText = manager.logHistory.suffix(3).reversed().joined(separator: "\n")
             fullLogText = manager.logHistory.reversed().joined(separator: "\n")
-            searching = manager.isSearching
-            searchResults = manager.discoveredSensors
         }
     }
 }

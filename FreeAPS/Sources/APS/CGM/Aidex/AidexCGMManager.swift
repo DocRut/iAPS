@@ -86,14 +86,6 @@ public struct AidexCGMState: RawRepresentable, Equatable {
 
 // MARK: - Менеджер
 
-/// Сенсор, найденный при BLE-сканировании.
-public struct AidexDiscoveredSensor: Identifiable {
-    public let name: String
-    public let serial: String
-    public let rssi: Int
-    public var id: String { serial }
-}
-
 public final class AidexCGMManager: CGMManager {
 
     public static let pluginIdentifier = "AidexCGM"
@@ -142,9 +134,6 @@ public final class AidexCGMManager: CGMManager {
 
     /// Кольцевой буфер последних BLE-событий для показа в настройках.
     private(set) var logHistory: [String] = []
-
-    /// Найденные при поиске сенсоры.
-    private(set) var discoveredSensors: [AidexDiscoveredSensor] = []
 
     // MARK: - Инициализация
 
@@ -211,18 +200,6 @@ public final class AidexCGMManager: CGMManager {
     public func reconnect() {
         ble.reconnect()
     }
-
-    /// Поиск сенсора: сканирует BLE и наполняет discoveredSensors.
-    public func startSearch() {
-        discoveredSensors = []
-        ble.startSearch()
-    }
-
-    public func stopSearch() {
-        ble.stopSearch()
-    }
-
-    public var isSearching: Bool { ble.searching }
 
     /// Отвязать сенсор от телефона.
     public func unpairSensor() {
@@ -413,12 +390,6 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
 
     func aidex(didUpdatePeripheralIdentifier id: String) {
         mutateState { $0.peripheralIdentifier = id }
-    }
-
-    func aidex(didDiscoverSensor name: String, serial: String, rssi: Int) {
-        // Не дублируем один и тот же серийник.
-        guard !discoveredSensors.contains(where: { $0.serial == serial }) else { return }
-        discoveredSensors.append(AidexDiscoveredSensor(name: name, serial: serial, rssi: rssi))
     }
 
     func aidex(didLog message: String) {

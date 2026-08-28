@@ -47,7 +47,6 @@ protocol AidexBLEManagerDelegate: AnyObject {
     func aidex(didUpdateTimeModel model: AidexTimeModel)
     func aidex(didReceiveDeviceInfo info: AidexDeviceInfo)
     func aidex(didUpdatePeripheralIdentifier id: String)
-    func aidex(didDiscoverSensor name: String, serial: String, rssi: Int)
     func aidex(didLog message: String)
 }
 
@@ -361,45 +360,6 @@ final class AidexBLEManager: NSObject {
         guard let name else { return false }
         let upper = name.uppercased()
         return AidexBLE.namePrefixes.contains { upper.hasPrefix($0.uppercased()) }
-    }
-
-    // MARK: Поиск сенсора
-
-    private(set) var searching = false
-
-    /// Таймер авто-остановки поиска (чтобы сканирование не шло вечно).
-    private var searchTimeoutWorkItem: DispatchWorkItem?
-
-    /// Сканирует эфир и сообщает найденные сенсоры через делегата,
-    /// НЕ подключаясь к ним. Остановить через stopSearch().
-    /// Подключённый сенсор не рекламирует себя, поэтому в результатах
-    /// появляются только НОВЫЕ (неподключённые) сенсоры.
-    func startSearch() {
-        guard central?.state == .poweredOn else {
-            log("поиск: Bluetooth недоступен")
-            return
-        }
-        searching = true
-        // Не трогаем состояние работающей сессии — просто сканируем поверх.
-        if case .running = state {} else { state = .scanning }
-        central?.scanForPeripherals(withServices: [AidexBLE.service], options: nil)
-        log("поиск сенсора: сканирование начато")
-
-        searchTimeoutWorkItem?.cancel()
-        let item = DispatchWorkItem { [weak self] in
-            self?.log("поиск сенсора: таймаут, останавливаю")
-            self?.stopSearch()
-        }
-        searchTimeoutWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: item)
-    }
-
-    func stopSearch() {
-        searching = false
-        central?.stopScan()
-        searchTimeoutWorkItem?.cancel()
-        searchTimeoutWorkItem = nil
-        if case .scanning = state { state = .idle }
     }
 
     /// java.cpp: id2time() — starttime + patchState + id*60.
@@ -982,14 +942,6 @@ extension AidexBLEManager: CBCentralManagerDelegate {
     ) {
         let advName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let name = peripheral.name ?? advName
-
-        // Режим поиска: сообщаем найденные сенсоры, не подключаясь.
-        if searching {
-            guard let name, matchesPrefix(name) else { return }
-            let serial = String(name.suffix(10))
-            delegate?.aidex(didDiscoverSensor: name, serial: serial, rssi: RSSI.intValue)
-            return
-        }
 
         guard matches(name: peripheral.name) || matches(name: advName) else { return }
 
