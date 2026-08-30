@@ -466,8 +466,10 @@ final class AidexBLEManager: NSObject {
             peripheral.setNotifyValue(true, for: f003)
         }
 
-        // java.cpp: late = haskey && hasTime
-        writeEncrypted(hasTime ? AidexCommand.startLate : AidexCommand.start)
+        // Всегда полный старт: перечитываем время старта сенсора, чтобы
+        // исправить рассинхрон часового пояса (сенсор отдаёт «заводской» +3,
+        // а телефон в +5). startLate пропускает синхронизацию времени.
+        writeEncrypted(AidexCommand.start)
 
         // Запускаем (или перезапускаем) опрос в режиме ежеминутных показаний.
         schedulePolling()
@@ -587,14 +589,6 @@ final class AidexBLEManager: NSObject {
         case 1:
             writeEncrypted(AidexCommand.requestWriteTime)
             return
-        case 0:
-            // java.cpp: hasTime && !stream->unbonded — "быстрый" старт
-            // только на реконнекте с уже известным ключом, не на свежей
-            // привязке (даже если hasTime почему-то уже true).
-            if hasTime, !freshPairing {
-                writeEncrypted(AidexCommand.startLate)
-                return
-            }
         default:
             break
         }
@@ -763,8 +757,15 @@ final class AidexBLEManager: NSObject {
                 isNewTime = true
                 log("перезапуск сенсора: сдвиг индексов \(minutes) мин + \(seconds) с")
             } else if let effective = currentEffective, effective > newStart {
-                log("ОШИБКА: новое время старта \(newStart) раньше текущего \(effective), игнорируем")
-                return
+                // Сенсор сообщает время старта РАНЬШЕ сохранённого. Это не ошибка,
+                // а рассинхрон: раньше мы читали его «заводской» часовой пояс (+3),
+                // теперь интерпретируем в поясе телефона (+5). Сбрасываем базу на
+                // свежее значение и обнуляем сдвиги.
+                baseStart = newStart
+                secondsRemainder = 0
+                indexShift = 0
+                isNewTime = true
+                log("время старта раньше сохранённого — сбрасываю базу")
             }
         }
 
