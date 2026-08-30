@@ -311,11 +311,17 @@ struct AidexLocalTime {
     // MARK: Преобразование в Date
 
     // java.cpp: unixtime() — timegm(tm) - (tz+dst)*15*60
+    //
+    // ВАЖНО: стеновые часы сенсора (year…second) интерпретируем в часовом поясе
+    // ТЕЛЕФОНА, а не по смещению, которое сообщил сенсор. Сенсор отдаёт
+    // «заводской» пояс (+3), а активирован рядом с телефоном в +5 — если
+    // верить его смещению, baseStart уезжает на 2 часа в будущее и весь график
+    // смещается вперёд.
 
     var date: Date? {
         guard year >= 2010 else { return nil }
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        calendar.timeZone = TimeZone.current
 
         var c = DateComponents()
         c.year = Int(year)
@@ -325,9 +331,7 @@ struct AidexLocalTime {
         c.minute = Int(minute)
         c.second = Int(second)
 
-        guard let utcInterpretation = calendar.date(from: c) else { return nil }
-        let offsetMinutes = (Int(timeZoneQuarterHours) + Int(dstOffsetQuarterHours)) * 15
-        return utcInterpretation.addingTimeInterval(-Double(offsetMinutes) * 60)
+        return calendar.date(from: c)
     }
 
     var debugDescription: String {

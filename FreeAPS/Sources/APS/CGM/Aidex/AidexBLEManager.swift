@@ -364,14 +364,21 @@ final class AidexBLEManager: NSObject {
 
     /// java.cpp: id2time() — starttime + patchState + id*60.
     /// id здесь АБСОЛЮТНЫЙ (уже после siAddedIndex).
+    ///
+    /// Сенсор стартует в произвольную секунду (:53), поэтому «сырая» метка
+    /// оказывается в будущем относительно часов телефона. Округляем вниз до
+    /// целой минуты: метка не в будущем (цикл её принимает, Live Activity
+    /// обновляются), а шаг между соседними записями остаётся ровно 60 с — так
+    /// 45-секундная дедупликация в GlucoseStorage не съедает показания.
     private func date(forID id: Int) -> Date {
         guard let baseStart else {
-            // Без известного времени старта откатываемся на часы телефона
             return Date()
         }
-        return baseStart.addingTimeInterval(
+        let timestamp = baseStart.addingTimeInterval(
             Double(secondsRemainder) + Double(id) * AidexBLE.recordInterval
         )
+        let floored = timestamp.timeIntervalSince1970.rounded(.down)
+        return Date(timeIntervalSince1970: floored)
     }
 
     // MARK: - Запись команд
@@ -785,7 +792,7 @@ final class AidexBLEManager: NSObject {
     ///   relID = startID - starthistory, но не меньше 1
     private func requestNextHistoryIfNeeded() {
         let next = lastReceivedID + 1
-        guard next < lastAvailableID else {
+        guard next <= lastAvailableID else {
             log("история загружена (следующий \(next), доступно до \(lastAvailableID))")
             return
         }
