@@ -25,6 +25,21 @@ jobs:
             pod install --repo-update
           fi
 
+      - name: List available schemes (workspace)
+        run: |
+          echo "=== Listing schemes from workspace ==="
+          xcodebuild -workspace FreeAPS.xcworkspace -list || true
+
+      - name: List available schemes (project)
+        run: |
+          echo "=== Listing schemes from project ==="
+          xcodebuild -project FreeAPS.xcodeproj -list || true
+
+      - name: Show shared schemes in repo
+        run: |
+          echo "=== Shared schemes stored in repo ==="
+          find . -name "*.xcscheme" -print
+
       - name: Build and Archive
         run: |
           if [ -d "FreeAPS.xcworkspace" ]; then
