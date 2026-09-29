@@ -26,6 +26,8 @@ jobs:
           fi
 
       - name: Build and Archive
+        id: archive
+        continue-on-error: true
         run: |
           set -o pipefail
           xcodebuild archive \
@@ -40,26 +42,32 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             -skipPackagePluginValidation \
             -skipMacroValidation \
-            2>&1 | tee xcodebuild.log || true
-          echo "--- BUILD FINISHED ---"
+            2>&1 | tee xcodebuild.log
 
-      - name: Show errors (if build failed)
-        if: failure()
+      - name: Show errors
+        if: always()
         run: |
-          grep -n "error:" xcodebuild.log | head -30 || echo "Не найдено"
+          echo "=== Последние 50 строк лога ==="
+          tail -50 xcodebuild.log || echo "Лог не найден"
+          echo ""
+          echo "=== Все строки с error: ==="
+          grep -n "error:" xcodebuild.log | head -40 || echo "Не найдено"
+          echo ""
+          echo "=== Секция failed commands ==="
           grep -A 15 "The following build commands failed" xcodebuild.log || echo "Не найдено"
 
-      - name: List archive contents
-        if: success()
+      - name: Check archive exists
+        if: always()
         run: |
-          echo "=== Products/Applications ==="
-          ls -la build/FreeAPS.xcarchive/Products/Applications/ || echo "Папка не найдена"
-          echo ""
-          echo "=== Поиск всех .app ==="
-          find build/FreeAPS.xcarchive -name "*.app" -maxdepth 5 || echo "Ничего не найдено"
+          if [ -d "build/FreeAPS.xcarchive" ]; then
+            echo "✅ Архив создан"
+            ls -la build/FreeAPS.xcarchive/Products/Applications/
+          else
+            echo "❌ Архив НЕ создан"
+          fi
 
       - name: Package unsigned IPA
-        if: success()
+        if: steps.archive.outcome == 'success'
         run: |
           mkdir -p Payload
           APP_PATH=$(find build/FreeAPS.xcarchive/Products/Applications -maxdepth 1 -name "*.app" | head -1)
@@ -69,7 +77,7 @@ jobs:
           rm -rf Payload
 
       - name: Upload IPA
-        if: success()
+        if: steps.archive.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: FreeAPS-unsigned-ipa
