@@ -27,6 +27,7 @@ jobs:
 
       - name: Build and Archive
         run: |
+          set -o pipefail
           xcodebuild archive \
             -project FreeAPS.xcodeproj \
             -scheme FreeAPS \
@@ -37,9 +38,25 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            IPHONEOS_DEPLOYMENT_TARGET=15.0
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 2>&1 | tee xcodebuild.log
+          echo "--- XCODEBUILD LOG START ---"
+          cat xcodebuild.log
+          echo "--- XCODEBUILD LOG END ---"
+
+      - name: Show real errors
+        if: always()
+        run: |
+          echo "=== Search for errors in log ==="
+          grep -i "error:" xcodebuild.log || echo "No 'error:' lines found"
+          echo ""
+          echo "=== Search for ARCHIVE FAILED ==="
+          grep -i "ARCHIVE FAILED" xcodebuild.log || echo "No 'ARCHIVE FAILED' lines found"
+          echo ""
+          echo "=== Search for failed commands ==="
+          grep -A 20 "The following build commands failed" xcodebuild.log || echo "No failed commands section found"
 
       - name: Package unsigned IPA
+        if: success()
         run: |
           mkdir -p Payload
           cp -R build/FreeAPS.xcarchive/Products/Applications/FreeAPS.app Payload/
@@ -47,8 +64,17 @@ jobs:
           rm -rf Payload
 
       - name: Upload IPA
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: FreeAPS-unsigned-ipa
           path: FreeAPS-unsigned.ipa
+          retention-days: 7
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
           retention-days: 7
