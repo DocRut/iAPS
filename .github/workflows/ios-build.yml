@@ -1,0 +1,60 @@
+name: Build Unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ aidex ]
+
+jobs:
+  build:
+    name: Build iAPS
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode version
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+
+      - name: Install CocoaPods dependencies
+        run: |
+          if [ -f "Podfile" ]; then
+            pod install --repo-update
+          fi
+
+      - name: Build and Archive
+        run: |
+          if [ -d "FreeAPS.xcworkspace" ]; then
+            PROJECT_TYPE="-workspace FreeAPS.xcworkspace"
+          else
+            PROJECT_TYPE="-project FreeAPS.xcodeproj"
+          fi
+
+          xcodebuild archive \
+            $PROJECT_TYPE \
+            -scheme "FreeAPS X" \
+            -configuration Release \
+            -archivePath $PWD/build/FreeAPS.xcarchive \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/FreeAPS.xcarchive/Products/Applications/FreeAPS.app Payload/
+          zip -qr FreeAPS-unsigned.ipa Payload
+          rm -rf Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeAPS-unsigned-ipa
+          path: FreeAPS-unsigned.ipa
+          retention-days: 7
