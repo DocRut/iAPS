@@ -35,7 +35,7 @@ jobs:
 
           xcodebuild archive \
             $PROJECT_TYPE \
-            -scheme "FreeAPS X" \
+            -scheme "FreeAPS" \
             -configuration Release \
             -archivePath $PWD/build/FreeAPS.xcarchive \
             -sdk iphoneos \
