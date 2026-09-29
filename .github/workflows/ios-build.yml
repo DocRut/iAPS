@@ -21,10 +21,11 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer
           xcodebuild -runFirstLaunch
 
-      - name: Ensure iOS platform is available
+      - name: Ensure iOS and watchOS platforms are available
         run: |
           xcrun simctl list > /dev/null || true
           xcodebuild -downloadPlatform iOS -buildVersion 18.1 || true
+          xcodebuild -downloadPlatform watchOS -buildVersion 11.1 || true
 
       - name: Install CocoaPods dependencies
         run: |
