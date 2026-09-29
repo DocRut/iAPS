@@ -38,22 +38,19 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
-            COMPILER_INDEX_STORE_ENABLE=NO \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
             2>&1 | tee xcodebuild.log || true
           echo "--- BUILD FINISHED ---"
 
-      - name: Show real errors
-        if: always()
+      - name: Show errors (if build failed)
+        if: failure()
         run: |
-          echo "=== Строки с error: ==="
-          grep -n "error:" xcodebuild.log | head -50 || echo "Не найдено"
-          echo ""
-          echo "=== Ошибки компилятора Swift (полный контекст) ==="
-          grep -B 2 -A 15 "LiveActivityExtension.swift.*error\|error:.*LiveActivity" xcodebuild.log | head -100 || echo "Не найдено"
+          echo "=== error: строки ==="
+          grep -n "error:" xcodebuild.log | head -30 || echo "Не найдено"
           echo ""
           echo "=== Секция failed commands ==="
-          grep -A 30 "The following build commands failed" xcodebuild.log || echo "Не найдено"
+          grep -A 15 "The following build commands failed" xcodebuild.log || echo "Не найдено"
 
       - name: Package unsigned IPA
         if: success()
