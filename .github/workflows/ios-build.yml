@@ -46,17 +46,25 @@ jobs:
       - name: Show errors (if build failed)
         if: failure()
         run: |
-          echo "=== error: строки ==="
           grep -n "error:" xcodebuild.log | head -30 || echo "Не найдено"
-          echo ""
-          echo "=== Секция failed commands ==="
           grep -A 15 "The following build commands failed" xcodebuild.log || echo "Не найдено"
+
+      - name: List archive contents
+        if: success()
+        run: |
+          echo "=== Products/Applications ==="
+          ls -la build/FreeAPS.xcarchive/Products/Applications/ || echo "Папка не найдена"
+          echo ""
+          echo "=== Поиск всех .app ==="
+          find build/FreeAPS.xcarchive -name "*.app" -maxdepth 5 || echo "Ничего не найдено"
 
       - name: Package unsigned IPA
         if: success()
         run: |
           mkdir -p Payload
-          cp -R build/FreeAPS.xcarchive/Products/Applications/FreeAPS.app Payload/
+          APP_PATH=$(find build/FreeAPS.xcarchive/Products/Applications -maxdepth 1 -name "*.app" | head -1)
+          echo "Найден .app: $APP_PATH"
+          cp -R "$APP_PATH" Payload/
           zip -qr FreeAPS-unsigned.ipa Payload
           rm -rf Payload
 
