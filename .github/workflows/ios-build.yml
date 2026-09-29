@@ -24,8 +24,16 @@ jobs:
       - name: Ensure iOS and watchOS platforms are available
         run: |
           xcrun simctl list > /dev/null || true
-          xcodebuild -downloadPlatform iOS -buildVersion 18.1 || true
-          xcodebuild -downloadPlatform watchOS -buildVersion 11.1 || true
+          xcodebuild -downloadPlatform iOS
+          xcodebuild -downloadPlatform watchOS
+
+      - name: Verify watchOS SDK is present
+        run: |
+          echo "=== Установленные SDK ==="
+          xcodebuild -showsdks
+          echo ""
+          echo "=== Проверка watchOS SDK ==="
+          xcodebuild -showsdks | grep -i watch || echo "watchOS SDK не найден!"
 
       - name: Install CocoaPods dependencies
         run: |
@@ -57,9 +65,6 @@ jobs:
         run: |
           echo "=== Все строки с error: ==="
           grep -n "error:" xcodebuild.log | head -40 || echo "Не найдено"
-          echo ""
-          echo "=== Секция failed commands ==="
-          grep -A 15 "The following build commands failed" xcodebuild.log || echo "Не найдено"
 
       - name: Check archive exists
         if: always()
