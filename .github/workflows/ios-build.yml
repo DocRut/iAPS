@@ -16,24 +16,20 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Select Xcode 16.1
+      - name: Select Xcode and download watchOS
         run: |
+          # Список доступных Xcode на раннере
+          ls /Applications/ | grep Xcode
+          # Выбираем Xcode 16.1
           sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer
           xcodebuild -runFirstLaunch
-
-      - name: Ensure iOS and watchOS platforms are available
-        run: |
-          xcrun simctl list > /dev/null || true
-          xcodebuild -downloadPlatform iOS
-          xcodebuild -downloadPlatform watchOS
-
-      - name: Verify watchOS SDK is present
-        run: |
-          echo "=== Установленные SDK ==="
+          # Скачиваем watchOS (может занять 10-15 минут)
+          xcodebuild -downloadPlatform watchOS -buildVersion 11.1
+          # Проверяем, что watchOS SDK появился
+          echo "=== Доступные SDK ==="
           xcodebuild -showsdks
-          echo ""
-          echo "=== Проверка watchOS SDK ==="
-          xcodebuild -showsdks | grep -i watch || echo "watchOS SDK не найден!"
+          echo "=== Проверка watchOS ==="
+          xcodebuild -showsdks | grep -i watch || echo "ОШИБКА: watchOS SDK не найден!"
 
       - name: Install CocoaPods dependencies
         run: |
