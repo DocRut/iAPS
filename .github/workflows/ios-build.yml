@@ -44,7 +44,6 @@ jobs:
             -scheme FreeAPS \
             -configuration Release \
             -archivePath $PWD/build/FreeAPS.xcarchive \
-            -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
@@ -58,6 +57,9 @@ jobs:
         run: |
           echo "=== Все строки с error: ==="
           grep -n "error:" xcodebuild.log | head -40 || echo "Не найдено"
+          echo ""
+          echo "=== Секция failed commands ==="
+          grep -A 15 "The following build commands failed" xcodebuild.log || echo "Не найдено"
 
       - name: Check archive exists
         if: always()
