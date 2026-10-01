@@ -1,0 +1,99 @@
+name: Build Unsigned IPA (no signing)
+
+# Сборка unsigned IPA без Apple Developer аккаунта.
+# Подпись отключена полностью — на выходе .ipa, который потом можно
+# подписать/загрузить через AltStore / Sideloadly / ESign.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ aidex-main ]
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        run: |
+          echo "Available Xcode versions:"
+          ls -d /Applications/Xcode*.app || true
+          # Предпочитаем Xcode 26.x (как в официальном build_iAPS.yml)
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then
+            # Фолбэк — любой самый свежий Xcode
+            XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          fi
+          if [ -z "$XCODE" ]; then
+            echo "::error::No Xcode found on this runner"
+            exit 1
+          fi
+          echo "Selecting $XCODE"
+          sudo xcode-select --switch "$XCODE/Contents/Developer"
+          xcodebuild -version
+
+      - name: Build and Archive (unsigned)
+        id: archive
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -workspace FreeAPS.xcworkspace \
+            -scheme FreeAPSWorkspace \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/FreeAPS.xcarchive" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            2>&1 | tee xcodebuild.log
+
+      - name: Show errors (if any)
+        if: failure()
+        run: |
+          echo "=== errors ==="
+          grep -n "error:" xcodebuild.log | head -40 || echo "No error: lines found"
+          echo ""
+          echo "=== failed build commands ==="
+          grep -A 15 "The following build commands failed" xcodebuild.log || true
+
+      - name: Package unsigned IPA
+        if: steps.archive.outcome == 'success'
+        run: |
+          mkdir -p Payload
+          APP_PATH=$(find build/FreeAPS.xcarchive/Products/Applications -maxdepth 1 -name "*.app" | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::.app not found in archive"
+            ls -la build/FreeAPS.xcarchive/Products/Applications/ || true
+            exit 1
+          fi
+          echo "Found .app: $APP_PATH"
+          cp -R "$APP_PATH" Payload/
+          zip -qr iAPS-unsigned.ipa Payload
+          rm -rf Payload
+          echo "IPA created:"
+          ls -la iAPS-unsigned.ipa
+
+      - name: Upload IPA
+        if: steps.archive.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: iAPS-unsigned-ipa
+          path: iAPS-unsigned.ipa
+          retention-days: 14
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+          retention-days: 14
