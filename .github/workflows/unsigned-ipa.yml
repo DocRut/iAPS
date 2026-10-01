@@ -65,6 +65,21 @@ jobs:
           echo "=== failed build commands ==="
           grep -A 15 "The following build commands failed" xcodebuild.log || true
 
+      - name: Strip armv7 from ConnectIQ (fix Sideloadly signing)
+        if: steps.archive.outcome == 'success'
+        run: |
+          APP_PATH=$(find build/FreeAPS.xcarchive/Products/Applications -maxdepth 1 -name "*.app" | head -1)
+          CQ="$APP_PATH/Frameworks/ConnectIQ.framework/ConnectIQ"
+          if [ -f "$CQ" ]; then
+            echo "Stripping armv7 from ConnectIQ.framework..."
+            lipo "$CQ" -remove armv7 -output "$CQ.arm64"
+            mv "$CQ.arm64" "$CQ"
+            echo "Architectures now:"
+            lipo -info "$CQ"
+          else
+            echo "ConnectIQ.framework not found (no-op)"
+          fi
+
       - name: Package unsigned IPA
         if: steps.archive.outcome == 'success'
         run: |
