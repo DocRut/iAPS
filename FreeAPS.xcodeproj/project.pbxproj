@@ -545,6 +545,12 @@
 		FEFA5C0F299F810B00765C17 /* Core_Data.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = FEFA5C0D299F810B00765C17 /* Core_Data.xcdatamodeld */; };
 		FEFA5C11299F814A00765C17 /* CoreDataStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEFA5C10299F814A00765C17 /* CoreDataStack.swift */; };
 		FEFFA7A22929FE49007B8193 /* UIDevice+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEFFA7A12929FE49007B8193 /* UIDevice+Extensions.swift */; };
+		315F884836174840BBE5D001 /* AidexCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6942867FAC944C57BD905C08 /* AidexCrypto.swift */; };
+		17415513C7824B0FBA0CDC0D /* AidexProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6E730852DE942E1A43886AA /* AidexProtocol.swift */; };
+		A1A9251FA79E477FA7131B0F /* AidexBLEManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDD88BDE2F5347FC81FB95CB /* AidexBLEManager.swift */; };
+		D72A71E0AFCE47DBB60A1079 /* AidexCGMManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F757F50F305C49488408ABAF /* AidexCGMManager.swift */; };
+		1A370DA5761C4972B5BEEE0B /* AidexCGMManager+UI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E28A1762A36C4908B3FA8F86 /* AidexCGMManager+UI.swift */; };
+		21CFC188A37241CEBC36036A /* AidexCGMPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB78D9D189E34F76ABD2561D /* AidexCGMPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1251,6 +1257,12 @@
 		FEFA5C0E299F810B00765C17 /* Core_Data.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = Core_Data.xcdatamodel; sourceTree = "<group>"; };
 		FEFA5C10299F814A00765C17 /* CoreDataStack.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = CoreDataStack.swift; sourceTree = "<group>"; };
 		FEFFA7A12929FE49007B8193 /* UIDevice+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "UIDevice+Extensions.swift"; sourceTree = "<group>"; };
+		6942867FAC944C57BD905C08 /* AidexCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AidexCrypto.swift; sourceTree = "<group>"; };
+		A6E730852DE942E1A43886AA /* AidexProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AidexProtocol.swift; sourceTree = "<group>"; };
+		EDD88BDE2F5347FC81FB95CB /* AidexBLEManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AidexBLEManager.swift; sourceTree = "<group>"; };
+		F757F50F305C49488408ABAF /* AidexCGMManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AidexCGMManager.swift; sourceTree = "<group>"; };
+		E28A1762A36C4908B3FA8F86 /* AidexCGMManager+UI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AidexCGMManager+UI.swift"; sourceTree = "<group>"; };
+		DB78D9D189E34F76ABD2561D /* AidexCGMPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AidexCGMPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -2051,6 +2063,7 @@
 			isa = PBXGroup;
 			children = (
 				F2941F9F2E787F3000A9DD5D /* AppGroupCGM */,
+				762EF37325DB4E569CCE0ED1 /* Aidex */,
 				38569344270B5DFA0002C50D /* CGMType.swift */,
 				3862CC03273D150600BF832C /* Calibrations */,
 				F2A4B7C52E6C9180000E0E85 /* BloodGlucoseManager.swift */,
@@ -3116,6 +3129,19 @@
 			path = View;
 			sourceTree = "<group>";
 		};
+		762EF37325DB4E569CCE0ED1 /* Aidex */ = {
+			isa = PBXGroup;
+			children = (
+				6942867FAC944C57BD905C08 /* AidexCrypto.swift */,
+				A6E730852DE942E1A43886AA /* AidexProtocol.swift */,
+				EDD88BDE2F5347FC81FB95CB /* AidexBLEManager.swift */,
+				F757F50F305C49488408ABAF /* AidexCGMManager.swift */,
+				E28A1762A36C4908B3FA8F86 /* AidexCGMManager+UI.swift */,
+				DB78D9D189E34F76ABD2561D /* AidexCGMPlugin.swift */,
+			);
+			path = Aidex;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -3810,6 +3836,12 @@
 				F2E8D15B2F0964860097F482 /* FoodItemImage.swift in Sources */,
 				191B609F2FB936CB0062BB0B /* MicroData.swift in Sources */,
 				F2941FA92E78823C00A9DD5D /* AppGroupCGMPlugin.swift in Sources */,
+				315F884836174840BBE5D001 /* AidexCrypto.swift in Sources */,
+				17415513C7824B0FBA0CDC0D /* AidexProtocol.swift in Sources */,
+				A1A9251FA79E477FA7131B0F /* AidexBLEManager.swift in Sources */,
+				D72A71E0AFCE47DBB60A1079 /* AidexCGMManager.swift in Sources */,
+				1A370DA5761C4972B5BEEE0B /* AidexCGMManager+UI.swift in Sources */,
+				21CFC188A37241CEBC36036A /* AidexCGMPlugin.swift in Sources */,
 				38A00B2325FC2B55006BC0B0 /* LRUCache.swift in Sources */,
 				1924F72C2BA35AE5006644EE /* TotalDailyDose.swift in Sources */,
 				3083261C4B268E353F36CD0B /* AutotuneConfigDataFlow.swift in Sources */,

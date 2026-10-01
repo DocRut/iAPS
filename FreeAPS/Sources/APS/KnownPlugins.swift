@@ -12,7 +12,13 @@ import OmnipodKit
 
 enum KnownPlugins {
     static func allowCalibrations(for cgmManager: CGMManager) -> Bool {
-        cgmManager.pluginIdentifier == LibreTransmitterManagerV3.pluginIdentifier
+        switch cgmManager.pluginIdentifier {
+        case AidexCGMManager.pluginIdentifier,
+             LibreTransmitterManagerV3.pluginIdentifier:
+            return true
+        default:
+            return false
+        }
     }
 
     static func glucoseUploadingAvailable(for cgmManager: CGMManager) -> Bool {
@@ -34,6 +40,10 @@ enum KnownPlugins {
         case MinimedPumpManager.pluginIdentifier: 6 * secondsOfDay
         case EversenseCGMManager
             .pluginIdentifier: (((cgmManager as? EversenseCGMManager)?.state.is365 ?? false) ? 365 : 180) * secondsOfDay
+        case AidexCGMManager.pluginIdentifier:
+            (cgmManager as? AidexCGMManager).flatMap {
+                $0.sensorExpiration?.timeIntervalSince($0.sensorStartDate ?? Date())
+            }
         default: nil
         }
     }
@@ -57,6 +67,8 @@ enum KnownPlugins {
             return (cgmManager as? LibreTransmitterManagerV3)?.sensorInfoObservable.activatedAt
         case EversenseCGMManager.pluginIdentifier:
             return (cgmManager as? EversenseCGMManager)?.state.activatedAt
+        case AidexCGMManager.pluginIdentifier:
+            return (cgmManager as? AidexCGMManager)?.sensorStartDate
         default:
             return nil
         }
