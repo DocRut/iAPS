@@ -38,6 +38,7 @@ protocol AidexBLEManagerDelegate: AnyObject {
     func aidex(didUpdateTimeModel model: AidexTimeModel)
     func aidex(didReceiveDeviceInfo info: AidexDeviceInfo)
     func aidex(didUpdatePeripheralIdentifier id: String)
+    func aidex(didUpdateMasterKey key: [UInt8])
     func aidex(didLog message: String)
 }
 
@@ -151,6 +152,14 @@ final class AidexBLEManager: NSObject {
     /// используется в handleDeviceInfo — см. её комментарий.
     private var freshPairing = false
 
+    /// Сколько раз в ТЕКУЩЕМ подключении перезапрашивали мастер-ключ.
+    /// Если сенсор перезапускали/перепривязывали, сохранённый мастер-ключ
+    /// перестаёт подходить, и старый код навсегда уходил в .failed — помогало
+    /// только физическое воздействие магнитом. Теперь драйвер сам проходит
+    /// привязку F001 заново и забирает у сенсора актуальный ключ.
+    private var repairAttempts = 0
+    private static let maxRepairAttempts = 3
+
     /// Взведён в willRestoreState, снят при первом же centralManagerDidUpdateState.
     /// Нужен только чтобы не запускать beginScan() поверх уже идущего
     /// восстановленного подключения — сам peripheral никогда не обнуляется
@@ -219,6 +228,7 @@ final class AidexBLEManager: NSObject {
             lastReceivedID = 0
             lastAvailableID = 0
             peripheralIdentifier = nil
+            repairAttempts = 0
         }
 
         serialNumber = normalized
@@ -320,7 +330,7 @@ final class AidexBLEManager: NSObject {
 
     /// Переподключение к ранее сохранённому устройству по UUID.
     /// Возвращает true, если периферия найдена и подключение начато.
-    @discardableResult  private func retrieveAndConnect() -> Bool {
+    @discardableResult private func retrieveAndConnect() -> Bool {
         guard let central, let id = peripheralIdentifier,
               let uuid = UUID(uuidString: id)
         else { return false }
@@ -413,31 +423,78 @@ final class AidexBLEManager: NSObject {
     /// Расшифровка сессионного ключа идёт МАСТЕР-КЛЮЧОМ (keys[0], полученным
     /// нотификацией на F001), а не askKey, который мы писали в F001.
     private func handleSessionKeyResponse(_ raw: [UInt8]) {
-        guard !masterKey.isEmpty else {
-            state = .failed("нет мастер-ключа для расшифровки сессионного ключа")
+        if let key = decodeSessionKey(raw) {
+            sessionKey = key
+            repairAttempts = 0
+            log("сессионный ключ принят")
+            beginSession()
             return
+        }
+
+        // Сюда попадаем, если сохранённый мастер-ключ не подошёл. Типичная
+        // причина — сенсор перезапускали/перепривязывали, и он сменил ключ.
+        // Раньше драйвер просто падал в .failed, и помочь мог только магнит.
+        // Теперь сами заново проходим привязку F001: сенсор отдаст актуальный
+        // мастер-ключ, а мы сохраним его и продолжим без вмешательства.
+        requestNewMasterKey(reason: "сессионный ключ не расшифрован сохранённым мастер-ключом")
+    }
+
+    /// Расшифровывает 17-байтный ответ F002 мастер-ключом.
+    /// nil — ключ не подошёл, нужна повторная привязка.
+    private func decodeSessionKey(_ raw: [UInt8]) -> [UInt8]? {
+        guard !masterKey.isEmpty else {
+            log("нет мастер-ключа для расшифровки сессионного ключа")
+            return nil
         }
         guard raw.count == 17 else {
-            state = .failed("ожидалось 17 байт ключа, получено \(raw.count)")
-            return
+            log("ожидалось 17 байт ключа, получено \(raw.count)")
+            return nil
         }
         guard let plain = AidexCrypto.decrypt(raw, key: masterKey, iv: iv), plain.count == 17 else {
-            state = .failed("не удалось расшифровать сессионный ключ")
-            return
+            log("не удалось расшифровать сессионный ключ")
+            return nil
         }
 
         let key = Array(plain[0 ..< 16])
         let expected = plain[16]
         let actual = AidexCRC.crc8Maxim(key)
-
         guard actual == expected else {
-            state = .failed(String(format: "CRC8 ключа: %02X != %02X", actual, expected))
+            log(String(format: "CRC8 ключа: %02X != %02X", actual, expected))
+            return nil
+        }
+        return key
+    }
+
+    /// Повторная привязка: забываем сохранённый мастер-ключ и просим сенсор
+    /// выдать актуальный через F001. Ограничено maxRepairAttempts, чтобы не
+    /// зациклиться, если сенсор отвечает не тем, что мы ждём.
+    private func requestNewMasterKey(reason: String) {
+        guard repairAttempts < Self.maxRepairAttempts else {
+            state = .failed(
+                "мастер-ключ сенсора не подходит. Нажмите «Переподключить сенсор»; " +
+                    "если не поможет — сенсор придётся перепривязать магнитом."
+            )
             return
         }
 
-        sessionKey = key
-        log("сессионный ключ принят")
-        beginSession()
+        repairAttempts += 1
+        masterKey = []
+        sessionKey = []
+        freshPairing = true
+        log("\(reason) — повторная привязка, попытка \(repairAttempts)/\(Self.maxRepairAttempts)")
+
+        guard let char = charPrivateUnbonded else {
+            state = .failed("F001 недоступна для повторной привязки")
+            return
+        }
+
+        // Если нотификации F001 уже включены, setNotifyValue(true) повторно
+        // не вызовет didUpdateNotificationStateFor — поэтому пишем askKey сами.
+        if char.isNotifying {
+            requestSessionKey()
+        } else {
+            peripheral?.setNotifyValue(true, for: char)
+        }
     }
 
     /// java.cpp: aidexXSaveKey() — мастер-ключ приходит нотификацией на F001.
@@ -449,6 +506,7 @@ final class AidexBLEManager: NSObject {
         }
         masterKey = raw
         log("мастер-ключ принят")
+        delegate?.aidex(didUpdateMasterKey: raw)
         guard let charData else { return }
         peripheral?.readValue(for: charData)
     }
@@ -728,7 +786,12 @@ final class AidexBLEManager: NSObject {
         }
         guard let newStart = local.date else {
             time0 = 1
-            log("localStartTime: некорректная дата (\(local.debugDescription))")
+            log("localStartTime: некорректная дата (\(local.debugDescription)) — активация, запрашиваю запись времени")
+            // Раньше здесь просто выходили и ждали следующего deviceInfo, то есть
+            // активация нового сенсора происходила только после ручного
+            // переподключения. Теперь сразу просим сенсор принять текущее время —
+            // это активирует новый сенсор с первого же подключения.
+            writeEncrypted(AidexCommand.requestWriteTime)
             return
         }
 
@@ -935,6 +998,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
         peripheral = restored
         restored.delegate = self
         clearCharacteristics()
+        repairAttempts = 0
 
         switch restored.state {
         case .connected:
@@ -1003,6 +1067,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
 
     func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
         rememberPeripheral(peripheral)
+        repairAttempts = 0
         state = .discoveringServices
         startDiscoveryTimeout()
         peripheral.discoverServices([AidexBLE.service])

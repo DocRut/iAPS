@@ -362,6 +362,16 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
         delegate.notify { $0?.cgmManagerDidUpdateState(self) }
     }
 
+    func aidex(didUpdateMasterKey key: [UInt8]) {
+        // Сохраняем сразу, не дожидаясь .running: если сенсор сменил ключ
+        // (перезапуск/перепривязка), неудачная попытка расшифровки не должна
+        // оставить в хранилище старый ключ. Иначе при следующем запуске
+        // приложения всё повторится по кругу.
+        guard !key.isEmpty, state.masterKey != Data(key) else { return }
+        mutateState { $0.masterKey = Data(key) }
+        aidex(didLog: "Aidex: мастер-ключ сохранён (\(key.count) байт)")
+    }
+
     func aidex(didUpdateTimeModel model: AidexTimeModel) {
         mutateState {
             $0.baseStart = model.baseStart
