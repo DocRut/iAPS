@@ -183,6 +183,13 @@ final class AidexBLEManager: NSObject {
     /// Таймер опроса истории.
     private var pollTimer: Timer?
 
+    /// Watchdog «нет данных»: если в .running 10 минут не приходит ни одного
+    /// пакета, принудительно переподключаемся — как по кнопке «Переподключить».
+    private var dataWatchdog: Timer?
+    private static let dataTimeout: TimeInterval = 10 * 60
+    private static let dataWatchdogInterval: TimeInterval = 60
+    private var lastDataReceivedAt = Date()
+
     /// Таймаут обнаружения сервисов: если didDiscoverServices не пришёл,
     /// переподключаемся (CoreBluetooth иногда "зависает" на discoverServices).
     private var discoveryTimeoutWorkItem: DispatchWorkItem?
@@ -272,6 +279,8 @@ final class AidexBLEManager: NSObject {
         clearCharacteristics()
         pollTimer?.invalidate()
         pollTimer = nil
+        dataWatchdog?.invalidate()
+        dataWatchdog = nil
         cancelDiscoveryTimeout()
         state = .idle
     }
@@ -442,6 +451,7 @@ final class AidexBLEManager: NSObject {
         if let key = decodeSessionKey(raw) {
             sessionKey = key
             repairAttempts = 0
+            lastDataReceivedAt = Date()
             log("сессионный ключ принят")
             beginSession()
             return
@@ -520,6 +530,7 @@ final class AidexBLEManager: NSObject {
             return
         }
         masterKey = raw
+        lastDataReceivedAt = Date()
         log("мастер-ключ принят")
         delegate?.aidex(didUpdateMasterKey: raw)
         guard let charData else { return }
@@ -541,6 +552,10 @@ final class AidexBLEManager: NSObject {
 
         // Запускаем (или перезапускаем) опрос в режиме ежеминутных показаний.
         schedulePolling()
+
+        // И watchdog: 10 минут без входящих данных — принудительный реконнект.
+        lastDataReceivedAt = Date()
+        startDataWatchdog()
     }
 
     // MARK: Опрос истории
@@ -560,6 +575,29 @@ final class AidexBLEManager: NSObject {
         guard case .running = state, !sessionKey.isEmpty, charData != nil else { return }
         log("опрос: запрос последнего значения")
         writeEncrypted(AidexCommand.askLastID)
+    }
+
+    // MARK: - Watchdog «нет данных»
+
+    private func startDataWatchdog() {
+        dataWatchdog?.invalidate()
+        let timer = Timer(timeInterval: Self.dataWatchdogInterval, repeats: true) { [weak self] _ in
+            self?.checkDataWatchdog()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        dataWatchdog = timer
+    }
+
+    private func checkDataWatchdog() {
+        guard case .running = state else { return }
+        let age = Date().timeIntervalSince(lastDataReceivedAt)
+        guard age >= Self.dataTimeout else { return }
+
+        log("нет данных \(Int(age / 60)) мин — принудительное переподключение")
+        // Сбрасываем отметку, чтобы не дёргать реконнект каждую минуту,
+        // если соединение почему-то не разорвётся.
+        lastDataReceivedAt = Date()
+        reconnect()
     }
 
     // MARK: Таймаут обнаружения сервисов
@@ -602,6 +640,8 @@ final class AidexBLEManager: NSObject {
             log(String(format: "F002: CRC16 %04X != %04X", actual, expected))
             return
         }
+
+        lastDataReceivedAt = Date()
 
         let code = UInt16(plain[0]) | UInt16(plain[1]) << 8
         guard let response = AidexResponse(rawValue: code) else {
@@ -966,6 +1006,8 @@ final class AidexBLEManager: NSObject {
             return
         }
 
+        lastDataReceivedAt = Date()
+
         // java.cpp: aidexXprocessCurrentData() обрабатывает ТОЛЬКО типы 1 и 3.
         // Тип 4 и прочие молча игнорируются.
         let packetType = body[0]
@@ -1128,6 +1170,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
             }
             return
         }
+        lastDataReceivedAt = Date()
         guard parsed.last.isPlausible else { return }
 
         var samples: [AidexSample] = []
