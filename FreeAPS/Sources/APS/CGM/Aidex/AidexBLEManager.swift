@@ -146,12 +146,6 @@ final class AidexBLEManager: NSObject {
     private var pendingUnpair = false
     private var pendingClear = false
 
-    /// AidexXGattCallback: keywhenconnecting / java.cpp: aidexXstream::unbonded.
-    /// true, если в ТЕКУЩЕМ подключении сессионный ключ запрашивался заново
-    /// (не было сохранённого). Выставляется в didUpdateNotificationStateFor,
-    /// используется в handleDeviceInfo — см. её комментарий.
-    private var freshPairing = false
-
     /// Сколько раз в ТЕКУЩЕМ подключении перезапрашивали мастер-ключ.
     /// Если сенсор перезапускали/перепривязывали, сохранённый мастер-ключ
     /// перестаёт подходить, и старый код навсегда уходил в .failed — помогало
@@ -171,6 +165,9 @@ final class AidexBLEManager: NSObject {
     /// java.cpp: writeChar(..., 20) — минимальный интервал между записями
     private static let writeGap: TimeInterval = 0.020
     private var lastWrite = Date.distantPast
+
+    /// Не спамить лог, если реклама почему-то не разбирается.
+    private var didLogAdvertisementFailure = false
 
     /// Интервал опроса истории — раз в минуту.
     private static let pollInterval: TimeInterval = 60
@@ -229,6 +226,10 @@ final class AidexBLEManager: NSObject {
             lastAvailableID = 0
             peripheralIdentifier = nil
             repairAttempts = 0
+            time0 = 0
+            pendingUnpair = false
+            pendingClear = false
+            didLogAdvertisementFailure = false
         }
 
         serialNumber = normalized
@@ -371,10 +372,14 @@ final class AidexBLEManager: NSObject {
     /// id здесь АБСОЛЮТНЫЙ (уже после siAddedIndex).
     ///
     /// Сенсор стартует в произвольную секунду (:53), поэтому «сырая» метка
-    /// оказывается в будущем относительно часов телефона. Округляем вниз до
-    /// целой минуты: метка не в будущем (цикл её принимает, Live Activity
-    /// обновляются), а шаг между соседними записями остаётся ровно 60 с — так
-    /// 45-секундная дедупликация в GlucoseStorage не съедает показания.
+    /// может быть на несколько секунд впереди часов телефона. Округляем вниз
+    /// до целой секунды (дробных долей у baseStart нет — это страховка от
+    /// накопления), шаг между записями остаётся ровно 60 с.
+    ///
+    /// ВАЖНО: метку НАМЕРЕННО не прижимаем к «сейчас». Прижатие даёт разрыв
+    /// ~7 с с последней записью истории, и 45-секундная дедупликация в
+    /// GlucoseStorage выбрасывает текущее показание — экран «зависает».
+    /// См. историю: «use sensor timestamp for F003 (fix current glucose freeze)».
     private func date(forID id: Int) -> Date {
         guard let baseStart else {
             return Date()
@@ -480,7 +485,6 @@ final class AidexBLEManager: NSObject {
         repairAttempts += 1
         masterKey = []
         sessionKey = []
-        freshPairing = true
         log("\(reason) — повторная привязка, попытка \(repairAttempts)/\(Self.maxRepairAttempts)")
 
         guard let char = charPrivateUnbonded else {
@@ -1043,7 +1047,14 @@ extension AidexBLEManager: CBCentralManagerDelegate {
 
     /// Пассивный разбор рекламы. Полезен, если подключение ещё не установлено.
     private func parseAdvertisement(_ raw: [UInt8]) {
-        guard hasTime, let parsed = AidexAdvertisement.parse(raw) else { return }
+        guard hasTime else { return }
+        guard let parsed = AidexAdvertisement.parse(raw) else {
+            if !didLogAdvertisementFailure {
+                didLogAdvertisementFailure = true
+                log("реклама: не удалось разобрать пакет (\(raw.count) байт): \(raw.hexString)")
+            }
+            return
+        }
         guard parsed.last.isPlausible else { return }
 
         var samples: [AidexSample] = []
@@ -1164,13 +1175,11 @@ extension AidexBLEManager: CBPeripheralDelegate {
             if masterKey.isEmpty {
                 // Новая привязка: включаем нотификации F001, откуда придёт
                 // мастер-ключ, и только потом пишем askKey.
-                freshPairing = true
                 log("новая привязка — включаем нотификации F001")
                 guard let charPrivateUnbonded else { return }
                 peripheral.setNotifyValue(true, for: charPrivateUnbonded)
             } else {
                 // Мастер-ключ сохранён: сразу читаем новый сессионный ключ из F002.
-                freshPairing = false
                 log("используем сохранённый мастер-ключ, читаем F002")
                 guard let charData else { return }
                 peripheral.readValue(for: charData)

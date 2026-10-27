@@ -17,8 +17,11 @@ enum AidexBLE {
     /// F003 — "private bonded": нотификации с текущей глюкозой.
     static let charPrivateBonded = CBUUID(string: "0000F003-0000-1000-8000-00805F9B34FB")
 
-    /// Префиксы имён устройств (java.cpp: getMicroType)
-    static let namePrefixes = ["AiDEX X-", "LinX-", "LumiFlex-"]
+    /// Префиксы имён устройств (java.cpp: getMicroType).
+    /// У Juggluco: LinX → "LinX_L", LumiFlex → "FlLumi", остальное — Aidex X.
+    /// Сравнение регистронезависимое; старые варианты с дефисом оставлены,
+    /// чтобы не потерять уже работающие сенсоры.
+    static let namePrefixes = ["AiDEX X-", "LinX_L", "LinX-", "FlLumi", "LumiFlex-"]
 
     /// java.cpp: aidexXlowest / aidexXhighest, мг/дл
     static let glucoseLowest = 18
@@ -375,37 +378,68 @@ struct AidexDeviceInfo {
 
 // glucose.h: union AdvertiseBytes.
 // Пассивный канал: глюкоза без шифрования и без подключения.
+//
+// ВАЖНО про формат на iOS. Juggluco (Android) получает ПОЛНЫЙ 62-байтный
+// scan record, поэтому читает last по смещению 11, prev — 19/22, CRC — 27.
+// CoreBluetooth на iOS отдаёт в CBAdvertisementDataManufacturerDataKey
+// только manufacturer data:
+//
+//   company ID (2) + last (8) + prev0 (3) + prev1 (3) + reserved (2) + CRC32 (4)
+//
+// то есть 22 байта. Те же поля лежат на 9 байт раньше: 2 / 10/13 / 18.
+// Раньше парсер требовал минимум 31 байт и использовал смещения полного
+// record — поэтому на iOS он не срабатывал ни разу.
 
 enum AidexAdvertisement {
+    /// Company ID Nordic (0x0059).
+    static let companyID: UInt16 = 0x0059
+
+    /// Минимальная длина manufacturer data Aidex: company + 20 байт payload.
+    static let minimumLength = 22
+
+    /// Смещения полей внутри manufacturer data (iOS).
+    private enum Offset {
+        static let last = 2
+        static let previous = 10
+        static let crc = 18
+        static let crcRange = 2 ..< 18
+    }
+
     /// glucose.h: mkseed() — сумма четырёх little-endian uint32
-    /// начиная со смещения 11, по модулю 0x7FA777.
+    /// по смещениям 2/6/10/14 (в полном record это 11/15/19/23),
+    /// по модулю 0x7FA777.
     static func makeSeed(_ raw: [UInt8]) -> UInt32? {
-        guard raw.count >= 27 else { return nil }
+        guard raw.count >= Self.minimumLength else { return nil }
         func le32(_ o: Int) -> UInt32 {
             UInt32(raw[o]) | UInt32(raw[o + 1]) << 8
                 | UInt32(raw[o + 2]) << 16 | UInt32(raw[o + 3]) << 24
         }
-        return (le32(11) &+ le32(15) &+ le32(19) &+ le32(23)) % 0x7FA777
+        let sum = le32(2) &+ le32(6) &+ le32(10) &+ le32(14)
+        return sum % 0x7FA777
     }
 
-    /// glucose.h: goodcrc() — crc32_normal(bytes+11, 0x10, seed) == crc32
+    /// glucose.h: goodcrc() — crc32_normal(mfg + 2, 0x10, seed) == crc32.
     static func verifyCRC(_ raw: [UInt8]) -> Bool {
-        guard raw.count >= 31, let seed = makeSeed(raw) else { return false }
-        let computed = AidexCRC.crc32Normal(raw[11 ..< 27], seed: seed)
-        let stored = UInt32(raw[27]) | UInt32(raw[28]) << 8
-            | UInt32(raw[29]) << 16 | UInt32(raw[30]) << 24
+        guard raw.count >= Self.minimumLength, let seed = makeSeed(raw) else { return false }
+        let computed = AidexCRC.crc32Normal(raw[Offset.crcRange], seed: seed)
+        let stored = UInt32(raw[Offset.crc]) | UInt32(raw[Offset.crc + 1]) << 8
+            | UInt32(raw[Offset.crc + 2]) << 16 | UInt32(raw[Offset.crc + 3]) << 24
         return computed == stored
     }
 
     /// Последнее значение + два предыдущих (glucose.h: lastglucose, prev[2]).
     /// Возвращает пары (minutesFromStart, glucose мг/дл).
     static func parse(_ raw: [UInt8]) -> (last: AidexLastPast, previous: [(Int, Int)])? {
-        guard verifyCRC(raw), let last = AidexLastPast(raw, at: 11) else { return nil }
+        guard raw.count >= Self.minimumLength,
+              (UInt16(raw[0]) | UInt16(raw[1]) << 8) == Self.companyID,
+              verifyCRC(raw),
+              let last = AidexLastPast(raw, at: Offset.last)
+        else { return nil }
 
         var previous: [(Int, Int)] = []
         var id = Int(last.minutesFromStart)
         for i in 0 ..< 2 {
-            let offset = 11 + AidexLastPast.length + i * AidexNextGlucose.length
+            let offset = Offset.previous + i * AidexNextGlucose.length
             id -= 1
             guard let next = AidexNextGlucose(raw, at: offset), next.isPlausible else { continue }
             previous.append((id, Int(next.glucose)))
