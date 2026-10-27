@@ -313,18 +313,24 @@ struct AidexLocalTime {
 
     // MARK: Преобразование в Date
 
-    // java.cpp: unixtime() — timegm(tm) - (tz+dst)*15*60
+    // java.cpp: unixtime() — timegm(tm) - (tz+dst)*15*60.
     //
-    // ВАЖНО: стеновые часы сенсора (year…second) интерпретируем в часовом поясе
-    // ТЕЛЕФОНА, а не по смещению, которое сообщил сенсор. Сенсор отдаёт
-    // «заводской» пояс (+3), а активирован рядом с телефоном в +5 — если
-    // верить его смещению, baseStart уезжает на 2 часа в будущее и весь график
-    // смещается вперёд.
+    // ВАЖНО: поля сенсора — это «стеновые» часы, а не UTC. Раньше их
+    // интерпретировали в ТЕКУЩЕМ поясе телефона. Это работало, пока телефон
+    // не менял пояс: при перелёте baseStart уезжал на разницу поясов, и
+    // handleLocalStartTime принимал это за «перезапуск сенсора».
+    //
+    // Теперь пояс, в котором записаны часы сенсора, ФИКСИРУЕТСЯ при записи
+    // времени (или при первой привязке) и сохраняется. Смена пояса телефона
+    // больше не влияет на baseStart. Если сохранённого пояса нет (сенсор
+    // активирован другим телефоном), используется пояс, который сообщает
+    // сам сенсор, но только если он не даёт старт в будущем.
 
-    var date: Date? {
+    /// Unix-время «как есть»: поля трактуются как UTC (timegm).
+    var utcEpoch: TimeInterval? {
         guard year >= 2010 else { return nil }
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone.current
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
 
         var c = DateComponents()
         c.year = Int(year)
@@ -334,7 +340,23 @@ struct AidexLocalTime {
         c.minute = Int(minute)
         c.second = Int(second)
 
-        return calendar.date(from: c)
+        return calendar.date(from: c)?.timeIntervalSince1970
+    }
+
+    /// Смещение, которое сообщает сам сенсор (tz + dst), в секундах.
+    var sensorUTCOffsetSeconds: Int {
+        (Int(timeZoneQuarterHours) + Int(dstOffsetQuarterHours)) * 15 * 60
+    }
+
+    /// Дата с явным смещением: UTC = timegm(поля) − offset.
+    func date(utcOffsetSeconds offset: Int) -> Date? {
+        guard let utc = utcEpoch else { return nil }
+        return Date(timeIntervalSince1970: utc - Double(offset))
+    }
+
+    /// Текущее смещение телефона (с учётом DST) — запасной вариант.
+    static func currentPhoneUTCOffset(for date: Date = Date()) -> Int {
+        TimeZone.current.secondsFromGMT(for: date)
     }
 
     var debugDescription: String {

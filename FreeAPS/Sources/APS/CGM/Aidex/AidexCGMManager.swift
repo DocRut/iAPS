@@ -28,6 +28,10 @@ public struct AidexCGMState: RawRepresentable, Equatable {
     /// java.cpp: getinfo()->starthistory — сдвиг индексов в минутах
     public var indexShift: Int = 0
 
+    /// Пояс, в котором записаны стеновые часы сенсора (секунды от UTC).
+    /// Хранится, чтобы смена пояса телефона не сдвигала метки.
+    public var sensorUTCOffsetSeconds: Int?
+
     /// Последний загруженный ID истории (абсолютный)
     public var lastReceivedID: Int = 0
 
@@ -55,6 +59,7 @@ public struct AidexCGMState: RawRepresentable, Equatable {
         baseStart = rawValue["baseStart"] as? Date
         secondsRemainder = rawValue["secondsRemainder"] as? Int ?? 0
         indexShift = rawValue["indexShift"] as? Int ?? 0
+        sensorUTCOffsetSeconds = rawValue["sensorUTCOffsetSeconds"] as? Int
         lastReceivedID = rawValue["lastReceivedID"] as? Int ?? 0
         sensorLifeDays = rawValue["sensorLifeDays"] as? Int ?? AidexBLE.defaultSensorLifetimeDays
         peripheralIdentifier = rawValue["peripheralIdentifier"] as? String
@@ -71,6 +76,7 @@ public struct AidexCGMState: RawRepresentable, Equatable {
             "sensorLifeDays": sensorLifeDays
         ]
         if let baseStart { raw["baseStart"] = baseStart }
+        if let sensorUTCOffsetSeconds { raw["sensorUTCOffsetSeconds"] = sensorUTCOffsetSeconds }
         if let peripheralIdentifier { raw["peripheralIdentifier"] = peripheralIdentifier }
         return raw
     }
@@ -149,7 +155,8 @@ public final class AidexCGMManager: CGMManager {
             secondsRemainder: s.secondsRemainder,
             indexShift: s.indexShift,
             lastReceivedID: s.lastReceivedID,
-            peripheralIdentifier: s.peripheralIdentifier
+            peripheralIdentifier: s.peripheralIdentifier,
+            utcOffsetSeconds: s.sensorUTCOffsetSeconds
         )
         ble.start(serialNumber: s.serialNumber)
     }
@@ -173,6 +180,7 @@ public final class AidexCGMManager: CGMManager {
                 $0.secondsRemainder = 0
                 $0.indexShift = 0
                 $0.lastReceivedID = 0
+                $0.sensorUTCOffsetSeconds = nil
             }
         }
 
@@ -356,6 +364,7 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
                 $0.secondsRemainder = 0
                 $0.indexShift = 0
                 $0.lastReceivedID = 0
+                $0.sensorUTCOffsetSeconds = nil
             }
         }
 
@@ -377,6 +386,7 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
             $0.baseStart = model.baseStart
             $0.secondsRemainder = model.secondsRemainder
             $0.indexShift = model.indexShift
+            $0.sensorUTCOffsetSeconds = model.utcOffsetSeconds
             $0.hasTime = true
         }
     }

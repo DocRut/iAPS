@@ -23,6 +23,9 @@ struct AidexTimeModel: Equatable {
     let secondsRemainder: Int
     /// java.cpp: getinfo()->starthistory — сдвиг индексов в минутах
     let indexShift: Int
+    /// Пояс, в котором записаны стеновые часы сенсора (секунды от UTC).
+    /// Нужен, чтобы перелёт в другой часовой пояс не сдвигал все метки.
+    let utcOffsetSeconds: Int
 
     /// java.cpp: getRestartTime()
     var effectiveStart: Date {
@@ -110,6 +113,11 @@ final class AidexBLEManager: NSObject {
     /// java.cpp: getinfo()->starthistory — сдвиг индексов в минутах
     private(set) var indexShift = 0
 
+    /// Пояс, в котором записаны стеновые часы сенсора (секунды от UTC).
+    /// Фиксируется при writeTime/первой привязке и сохраняется, чтобы
+    /// перелёт в другой часовой пояс не сдвигал baseStart.
+    private var sensorUTCOffset: Int?
+
     /// java.cpp: lastLifeCountReceived — последний полученный ID (абсолютный)
     private var lastReceivedID = 0
 
@@ -194,7 +202,8 @@ final class AidexBLEManager: NSObject {
         secondsRemainder seconds: Int,
         indexShift shift: Int,
         lastReceivedID lastID: Int,
-        peripheralIdentifier identifier: String?
+        peripheralIdentifier identifier: String?,
+        utcOffsetSeconds offset: Int?
     )
     {
         masterKey = key
@@ -204,6 +213,7 @@ final class AidexBLEManager: NSObject {
         indexShift = shift
         lastReceivedID = lastID
         peripheralIdentifier = identifier
+        sensorUTCOffset = offset
     }
 
     /// serial — полный серийный номер, 10 символов (напр. "222225C99G").
@@ -230,6 +240,7 @@ final class AidexBLEManager: NSObject {
             pendingUnpair = false
             pendingClear = false
             didLogAdvertisementFailure = false
+            sensorUTCOffset = nil
         }
 
         serialNumber = normalized
@@ -609,12 +620,13 @@ final class AidexBLEManager: NSObject {
         case .lastValue: handleLastValue(body)
         case .pastValues: handlePastValues(body)
         case .rawPastValues: break // java.cpp: возвращает sizeZero, ничего не делает
-        case .wantTime: writeEncrypted(AidexCommand.writeTime())
+        case .wantTime: sendWriteTime()
         case .need11: writeEncrypted(AidexCommand.cmd11)
         case .need34: writeEncrypted(AidexCommand.cmd34)
         case .unpairOK:
             log("сенсор отвязан")
             pendingUnpair = false
+            sensorUTCOffset = nil
             state = .unpaired
             stop()
         case .unpairFail:
@@ -627,6 +639,7 @@ final class AidexBLEManager: NSObject {
             masterKey = []
             sessionKey = []
             hasTime = false
+            sensorUTCOffset = nil
             state = .unpaired
             stop()
         case .clearFail:
@@ -773,6 +786,55 @@ final class AidexBLEManager: NSObject {
         requestNextHistoryIfNeeded()
     }
 
+    /// Выбирает смещение для перевода стеновых часов сенсора в UTC.
+    ///
+    /// Приоритет:
+    /// 1) уже сохранённое смещение — оно зафиксировано при записи времени
+    ///    или первой привязке и не зависит от текущего пояса телефона;
+    /// 2) пояс, который сообщает сенсор, если он не даёт старт в будущем
+    ///    (сенсор мог быть активирован другим телефоном);
+    /// 3) текущий пояс телефона.
+    ///
+    /// Проверка «не в будущем» нужна для сенсоров, которые отдают устаревший
+    /// «заводской» пояс: иначе baseStart уезжает вперёд.
+    private func resolveUTCOffset(
+        for local: AidexLocalTime,
+        wallUTC: TimeInterval,
+        now: Date
+    ) -> Int {
+        let tolerance: TimeInterval = 300
+
+        if let stored = sensorUTCOffset,
+           wallUTC - Double(stored) <= now.timeIntervalSince1970 + tolerance
+        {
+            return stored
+        }
+
+        let sensorOffset = local.sensorUTCOffsetSeconds
+        if wallUTC - Double(sensorOffset) <= now.timeIntervalSince1970 + tolerance {
+            sensorUTCOffset = sensorOffset
+            log(String(format: "пояс сенсора %+.1f ч — использую его", Double(sensorOffset) / 3600))
+            return sensorOffset
+        }
+
+        let phoneOffset = AidexLocalTime.currentPhoneUTCOffset(for: now)
+        sensorUTCOffset = phoneOffset
+        log(String(format: "пояс сенсора не подходит — использую пояс телефона %+.1f ч", Double(phoneOffset) / 3600))
+        return phoneOffset
+    }
+
+    /// java.cpp: writeTime(). Заодно фиксируем пояс, в котором записаны
+    /// стеновые часы сенсора: дальше переводим их в UTC именно им, а не
+    /// текущим поясом телефона. Это и есть защита от перелёта.
+    private func sendWriteTime() {
+        let now = Date()
+        sensorUTCOffset = AidexLocalTime.currentPhoneUTCOffset(for: now)
+        writeEncrypted(AidexCommand.writeTime(now))
+        if baseStart != nil {
+            notifyTimeModel()
+        }
+    }
+
     /// java.cpp: receiveLocalStarttime()
     ///
     /// ИЗВЕСТНЫЙ ПРОБЕЛ: оригинал (Android) в конце дополнительно проверяет
@@ -788,13 +850,22 @@ final class AidexBLEManager: NSObject {
             log("localStartTime: пакет короче \(AidexLocalTime.length + 2)")
             return
         }
-        guard let newStart = local.date else {
+        guard let wallUTC = local.utcEpoch else {
             time0 = 1
             log("localStartTime: некорректная дата (\(local.debugDescription)) — активация, запрашиваю запись времени")
             // Раньше здесь просто выходили и ждали следующего deviceInfo, то есть
             // активация нового сенсора происходила только после ручного
             // переподключения. Теперь сразу просим сенсор принять текущее время —
             // это активирует новый сенсор с первого же подключения.
+            writeEncrypted(AidexCommand.requestWriteTime)
+            return
+        }
+
+        let now = Date()
+        let offset = resolveUTCOffset(for: local, wallUTC: wallUTC, now: now)
+        guard let newStart = local.date(utcOffsetSeconds: offset) else {
+            time0 = 1
+            log("localStartTime: не удалось перевести время в UTC (\(local.debugDescription))")
             writeEncrypted(AidexCommand.requestWriteTime)
             return
         }
@@ -854,7 +925,9 @@ final class AidexBLEManager: NSObject {
         delegate?.aidex(didUpdateTimeModel: AidexTimeModel(
             baseStart: baseStart,
             secondsRemainder: secondsRemainder,
-            indexShift: indexShift
+            indexShift: indexShift,
+            utcOffsetSeconds: sensorUTCOffset
+                ?? AidexLocalTime.currentPhoneUTCOffset()
         ))
     }
 
