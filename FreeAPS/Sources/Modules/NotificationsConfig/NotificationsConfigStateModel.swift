@@ -17,13 +17,13 @@ extension NotificationsConfig {
         @Published var liveActivityWatchDelta = true
         @Published var liveActivityWatchEventual = true
 
-        @Published var hypoSound: String = "New/Anticipalte.caf"
-        @Published var hyperSound: String = "New/Anticipalte.caf"
+        @Published var hypoSound: String = "New/Anticipate.caf"
+        @Published var hyperSound: String = "New/Anticipate.caf"
         @Published var ascending: String = "Silent"
         @Published var descending: String = "Silent"
-        @Published var carbSound: String = "New/Anticipalte.caf"
+        @Published var carbSound: String = "New/Anticipate.caf"
         @Published var bolusFailure: String = "Silent"
-        @Published var missingLoops = true
+        @Published var missingLoopsSound: String = "Default"
 
         @Published var lowAlert = true
         @Published var highAlert = true
@@ -31,7 +31,7 @@ extension NotificationsConfig {
         @Published var descendingAlert = true
         @Published var carbsRequiredAlert = true
 
-        @Published var alarmSound: String = "New/Anticipalte.caf"
+        @Published var alarmSound: String = "New/Anticipate.caf"
 
         var units: GlucoseUnits = .mmolL
 
@@ -84,7 +84,7 @@ extension NotificationsConfig {
             subscribeSetting(\.ascending, on: $ascending) { ascending = $0 }
             subscribeSetting(\.descending, on: $descending) { descending = $0 }
             subscribeSetting(\.carbSound, on: $carbSound) { carbSound = $0 }
-            subscribeSetting(\.missingLoops, on: $missingLoops) { missingLoops = $0 }
+            subscribeSetting(\.missingLoopsSound, on: $missingLoopsSound) { missingLoopsSound = $0 }
         }
     }
 }

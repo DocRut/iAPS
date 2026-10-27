@@ -113,6 +113,7 @@ final class BaseUserNotificationsManager: NSObject, UserNotificationsManager, In
                         content.sound = .default
                     }
                 } else if sound != "Silent" {
+                    content.sound = self.notificationSound(for: sound)
                     self.playSoundIfNeeded(sound: sound)
                 }
             }
@@ -133,7 +134,7 @@ final class BaseUserNotificationsManager: NSObject, UserNotificationsManager, In
     }
 
     private func scheduleMissingLoopNotifiactions(date _: Date) {
-        let sound = settingsManager.settings.missingLoops
+        let sound = settingsManager.settings.missingLoopsSound
         ensureCanSendNotification {
             let title = NSLocalizedString("iAPS not active", comment: "iAPS not active")
             let body = NSLocalizedString("Last loop was more than %d min ago", comment: "Last loop was more than %d min ago")
@@ -144,12 +145,15 @@ final class BaseUserNotificationsManager: NSObject, UserNotificationsManager, In
             let firstContent = UNMutableNotificationContent()
             firstContent.title = title
             firstContent.body = String(format: body, firstInterval)
-            if sound { firstContent.sound = .default }
 
             let secondContent = UNMutableNotificationContent()
             secondContent.title = title
             secondContent.body = String(format: body, secondInterval)
-            if sound { secondContent.sound = .default }
+
+            if let alertSound = self.notificationSound(for: sound) {
+                firstContent.sound = alertSound
+                secondContent.sound = alertSound
+            }
 
             let firstTrigger = UNTimeIntervalNotificationTrigger(timeInterval: 60 * TimeInterval(firstInterval), repeats: false)
             let secondTrigger = UNTimeIntervalNotificationTrigger(timeInterval: 60 * TimeInterval(secondInterval), repeats: false)
@@ -186,6 +190,7 @@ final class BaseUserNotificationsManager: NSObject, UserNotificationsManager, In
                     content.sound = .default
                 }
             } else if sound != "Silent" {
+                content.sound = self.notificationSound(for: sound)
                 self.playSoundIfNeeded(sound: sound)
             }
 
@@ -211,7 +216,7 @@ final class BaseUserNotificationsManager: NSObject, UserNotificationsManager, In
 
         ensureCanSendNotification {
             var titles: [String] = []
-            var sound: String = "New/Anticipalte.caf"
+            var sound: String = "New/Anticipate.caf"
             var alert = true
 
             switch self.glucoseStorage.alarm {
@@ -252,6 +257,7 @@ final class BaseUserNotificationsManager: NSObject, UserNotificationsManager, In
                     if sound == "Default" {
                         content.sound = .default
                     } else {
+                        content.sound = self.notificationSound(for: sound)
                         self.playSoundIfNeeded(sound: sound)
                     }
                 }
@@ -372,38 +378,113 @@ final class BaseUserNotificationsManager: NSObject, UserNotificationsManager, In
     private func playSoundIfNeeded(sound: String) {
         guard settingsManager.settings.useAlarmSound, snoozeUntilDate < Date() else { return }
         guard sound != "Silent" else { return }
-
-        Self.stopPlaying = false
-        playSound(sound: sound)
+        startAlarm(sound: sound)
     }
 
     private func playSoundWithoutSnooze(_ sound: String) {
         guard settingsManager.settings.useAlarmSound else { return }
         guard sound != "Silent" else { return }
-
-        Self.stopPlaying = false
-        playSound(sound: sound)
+        startAlarm(sound: sound)
     }
 
-    static var soundID: UInt32 = 1336
+    // MARK: - Тревожный звук
+
+    /// Пауза между повторами, если звук короткий.
+    private static let alarmGap: TimeInterval = 0.25
+    /// Поколение тревоги: новая тревога или stopSound() отменяет предыдущий цикл.
+    private static var alarmGeneration = 0
+    /// Текущий SystemSoundID (0 — ничего не играет).
+    private static var currentSoundID: SystemSoundID = 0
     private static var stopPlaying = false
 
-    private func playSound(times: Int = 1, sound: String) {
-        guard times > 0, !Self.stopPlaying else {
-            return
-        }
-        let path = "/System/Library/Audio/UISounds/" + sound
-        let soundURL = URL(string: path)
-        AudioServicesCreateSystemSoundID(soundURL! as CFURL, &Self.soundID)
+    /// Запускает звук и повторяет его до stopSound() или новой тревоги.
+    private func startAlarm(sound: String) {
+        DispatchQueue.main.async {
+            Self.alarmGeneration += 1
+            let generation = Self.alarmGeneration
+            Self.stopPlaying = false
 
-        AudioServicesPlaySystemSoundWithCompletion(SystemSoundID(Self.soundID)) {
-            self.playSound(times: times - 1, sound: sound)
+            // Не даём новому звуку накладываться на предыдущий.
+            if Self.currentSoundID != 0 {
+                AudioServicesDisposeSystemSoundID(Self.currentSoundID)
+                Self.currentSoundID = 0
+            }
+
+            self.playAlarm(sound: sound, generation: generation)
         }
     }
 
+    private func playAlarm(sound: String, generation: Int) {
+        guard !Self.stopPlaying, generation == Self.alarmGeneration else { return }
+
+        let path = "/System/Library/Audio/UISounds/" + sound
+        let soundURL = URL(fileURLWithPath: path)
+        var id: SystemSoundID = 0
+        guard AudioServicesCreateSystemSoundID(soundURL as CFURL, &id) == kAudioServicesNoError else {
+            warning(.service, "Не удалось создать звук тревоги \(sound)")
+            return
+        }
+        Self.currentSoundID = id
+
+        AudioServicesPlaySystemSoundWithCompletion(id) {
+            DispatchQueue.main.async {
+                if Self.currentSoundID == id {
+                    AudioServicesDisposeSystemSoundID(id)
+                    Self.currentSoundID = 0
+                }
+                guard !Self.stopPlaying, generation == Self.alarmGeneration else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.alarmGap) {
+                    self.playAlarm(sound: sound, generation: generation)
+                }
+            }
+        }
+    }
+
+    /// Останавливает тревожный звук. Вызывается при snooze, тапе по уведомлению
+    /// и когда тревога снялась сама.
     static func stopSound() {
-        stopPlaying = true
-        AudioServicesDisposeSystemSoundID(soundID)
+        DispatchQueue.main.async {
+            stopPlaying = true
+            alarmGeneration += 1
+            if currentSoundID != 0 {
+                AudioServicesDisposeSystemSoundID(currentSoundID)
+                currentSoundID = 0
+            }
+        }
+    }
+
+    /// Готовит звук для UNNotificationContent.
+    ///
+    /// Системные звуки iOS лежат в /System/Library/Audio/UISounds, но iOS
+    /// ищет пользовательский звук уведомления только в бандле приложения или
+    /// в Library/Sounds его контейнера. Поэтому копируем выбранный системный
+    /// звук в Library/Sounds и ссылаемся на копию по имени.
+    private func notificationSound(for sound: String) -> UNNotificationSound? {
+        guard sound != "Silent" else { return nil }
+        if sound == "Default" { return .default }
+
+        let source = URL(fileURLWithPath: "/System/Library/Audio/UISounds/" + sound)
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: source.path),
+              let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first
+        else { return .default }
+
+        let directory = library.appendingPathComponent("Sounds", isDirectory: true)
+        let name = "iaps_" + sound
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+        let destination = directory.appendingPathComponent(name)
+
+        if !fm.fileExists(atPath: destination.path) {
+            do {
+                try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+                try fm.copyItem(at: source, to: destination)
+            } catch {
+                warning(.service, "Не удалось подготовить звук уведомления \(sound)", error: error)
+                return .default
+            }
+        }
+        return UNNotificationSound(named: UNNotificationSoundName(name))
     }
 
     private var glucoseFormatter: NumberFormatter {
@@ -492,6 +573,9 @@ extension BaseUserNotificationsManager: UNUserNotificationCenterDelegate {
 
         switch action {
         case .snooze:
+            // Пользователь подтвердил тревогу (тап по уведомлению) —
+            // останавливаем звук, не дожидаясь кнопки в модальном окне.
+            BaseUserNotificationsManager.stopSound()
             router.mainModalScreen.send(.snooze)
         }
     }

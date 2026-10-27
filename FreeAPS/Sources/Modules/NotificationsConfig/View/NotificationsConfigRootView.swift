@@ -180,10 +180,10 @@ extension NotificationsConfig {
                             title: "Bolus Failure",
                             selection: $state.bolusFailure
                         )
-                        Picker(selection: $state.missingLoops, label: Text("Missing Loops")) {
-                            silentView.tag(false)
-                            Text("iOS default sound").tag(true)
-                        }.pickerStyle(.navigationLink)
+                        soundPicker(
+                            title: "Missing Loops",
+                            selection: $state.missingLoopsSound
+                        )
                     }
                 } header: { Text("Sounds") }
 

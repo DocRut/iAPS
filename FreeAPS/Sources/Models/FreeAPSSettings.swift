@@ -76,6 +76,9 @@ struct FreeAPSSettings: JSON, Equatable {
     var carbSound: String = "Default"
     var bolusFailure: String = "Silent"
     var missingLoops = true
+    /// Мелодия для «пропуска цикла». Отдельно от старого Bool `missingLoops`:
+    /// он остаётся для миграции старых сохранений (true → Default, false → Silent).
+    var missingLoopsSound: String = "Default"
     // Alerts
     var lowAlert: Bool = true
     var highAlert: Bool = true
@@ -534,8 +537,11 @@ extension FreeAPSSettings: Decodable {
             settings.bolusFailure = bolusFailure
         }
 
-        if let missingLoops = try? container.decode(Bool.self, forKey: .missingLoops) {
-            settings.missingLoops = missingLoops
+        if let missingLoopsSound = try? container.decode(String.self, forKey: .missingLoopsSound) {
+            settings.missingLoopsSound = missingLoopsSound
+        } else if let missingLoops = try? container.decode(Bool.self, forKey: .missingLoops) {
+            // Миграция со старого переключателя: было / выключено.
+            settings.missingLoopsSound = missingLoops ? "Default" : "Silent"
         }
 
         if let profilesOrTempTargets = try? container.decode(Bool.self, forKey: .profilesOrTempTargets) {
@@ -760,6 +766,19 @@ extension FreeAPSSettings: Decodable {
         if let nightTime = try? container.decode(NightTimeConfiguration.self, forKey: .nightTime) {
             settings.nightTime = nightTime
         }
+
+        // Исправление старой опечатки в имени системного звука: файла
+        // "Anticipalte.caf" в iOS нет, поэтому звук по умолчанию молчал.
+        // Чиним и уже сохранённые на телефоне настройки.
+        let legacySound = "New/Anticipalte.caf"
+        let fixedSound = "New/Anticipate.caf"
+        if settings.hypoSound == legacySound { settings.hypoSound = fixedSound }
+        if settings.hyperSound == legacySound { settings.hyperSound = fixedSound }
+        if settings.ascending == legacySound { settings.ascending = fixedSound }
+        if settings.descending == legacySound { settings.descending = fixedSound }
+        if settings.carbSound == legacySound { settings.carbSound = fixedSound }
+        if settings.bolusFailure == legacySound { settings.bolusFailure = fixedSound }
+        if settings.missingLoopsSound == legacySound { settings.missingLoopsSound = fixedSound }
 
         self = settings
     }
