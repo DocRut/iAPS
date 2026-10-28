@@ -3,6 +3,8 @@ import Foundation
 import HealthKit
 import LoopKit
 import LoopKitUI
+import UIKit
+import UserNotifications
 
 // MARK: - Сохраняемое состояние
 
@@ -129,6 +131,17 @@ public final class AidexCGMManager: CGMManager {
     private var sessionState: AidexBLEManager.SessionState = .idle
     private var deviceInfo: AidexDeviceInfo?
 
+    /// Когда последний раз пришло новое показание (не дата сенсора, а
+    /// момент прихода в приложение). Нужен для алярма «нет данных CGM»
+    /// и восстановления после фона.
+    private var lastSampleArrivalAt = Date()
+
+    /// Уведомление «нет данных CGM» — страховка на случай, если приложение
+    /// выгружено/зависло и обычный watchdog не успел сработать.
+    private static let staleNotificationID = "FreeAPS.aidexCGMStale"
+    private static let staleNotificationDelay: TimeInterval = 15 * 60
+    private var foregroundObserver: NSObjectProtocol?
+
     /// Кольцевой буфер последних BLE-событий для показа в настройках.
     private(set) var logHistory: [String] = []
 
@@ -137,12 +150,79 @@ public final class AidexCGMManager: CGMManager {
     public init() {
         lockedState = Locked(AidexCGMState())
         ble.delegate = self
+        observeForeground()
     }
 
     public required init?(rawState: RawStateValue) {
         lockedState = Locked(AidexCGMState(rawValue: rawState))
         ble.delegate = self
+        observeForeground()
         restoreAndStart()
+    }
+
+    deinit {
+        if let foregroundObserver {
+            Foundation.NotificationCenter.default.removeObserver(foregroundObserver)
+        }
+    }
+
+    private func observeForeground() {
+        foregroundObserver = Foundation.NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.recoverAfterBackgroundIfNeeded()
+        }
+    }
+
+    /// После возврата в приложение: если и данных, и показаний давно нет,
+    /// делаем полный перезапуск BLE — то же, что закрыть/открыть приложение.
+    private func recoverAfterBackgroundIfNeeded() {
+        guard !state.serialNumber.isEmpty else { return }
+        switch sessionState {
+        case .failed,
+             .running:
+            break
+        default:
+            return
+        }
+
+        let noSample = Date().timeIntervalSince(lastSampleArrivalAt)
+        let noData = Date().timeIntervalSince(ble.lastDataAt)
+        guard noSample >= 10 * 60, noData >= 5 * 60 else { return }
+
+        aidex(didLog: "приложение активно, данных нет \(Int(noSample / 60)) мин — полный перезапуск BLE")
+        ble.restart()
+    }
+
+    /// Переставляет «мёртвый» алярм на 15 минут вперёд при каждом новом
+    /// показании. Если показаний не будет, iOS покажет уведомление даже
+    /// если приложение выгружено.
+    private func scheduleStaleNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "Нет данных CGM"
+        content.body = "Нет новых показаний глюкозы более 15 минут. Открой iAPS и проверь сенсор."
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: Self.staleNotificationID,
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(
+                timeInterval: Self.staleNotificationDelay,
+                repeats: false
+            )
+        )
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [Self.staleNotificationID])
+        center.removeDeliveredNotifications(withIdentifiers: [Self.staleNotificationID])
+        center.add(request)
+    }
+
+    private func cancelStaleNotification() {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [Self.staleNotificationID])
+        center.removeDeliveredNotifications(withIdentifiers: [Self.staleNotificationID])
     }
 
     private func restoreAndStart() {
@@ -318,6 +398,9 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
             latestSample = current
         }
 
+        lastSampleArrivalAt = Date()
+        scheduleStaleNotification()
+
         // Сохраняем прогресс истории
         if let maxID = samples.map(\.id).max(), maxID > state.lastReceivedID {
             mutateState { $0.lastReceivedID = maxID }
@@ -366,6 +449,15 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
                 $0.lastReceivedID = 0
                 $0.sensorUTCOffsetSeconds = nil
             }
+        }
+
+        switch state {
+        case .idle,
+             .sensorEnded,
+             .unpaired:
+            cancelStaleNotification()
+        default:
+            break
         }
 
         delegate.notify { $0?.cgmManagerDidUpdateState(self) }

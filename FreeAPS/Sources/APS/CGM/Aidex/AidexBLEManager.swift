@@ -190,6 +190,9 @@ final class AidexBLEManager: NSObject {
     private static let dataWatchdogInterval: TimeInterval = 60
     private var lastDataReceivedAt = Date()
 
+    /// Для CGM-менеджера: когда последний раз приходили любые BLE-данные.
+    var lastDataAt: Date { lastDataReceivedAt }
+
     /// Таймаут обнаружения сервисов: если didDiscoverServices не пришёл,
     /// переподключаемся (CoreBluetooth иногда "зависает" на discoverServices).
     private var discoveryTimeoutWorkItem: DispatchWorkItem?
@@ -347,6 +350,20 @@ final class AidexBLEManager: NSObject {
         } else {
             reconnectOrScan()
         }
+    }
+
+    /// Полный перезапуск BLE: как закрыть и снова открыть приложение.
+    /// Создаёт новый CBCentralManager, поэтому лечит «залипшее» состояние,
+    /// которое обычный reconnect не убирает.
+    func restart() {
+        guard !serialNumber.isEmpty else { return }
+        log("полный перезапуск BLE")
+        stop()
+        central?.delegate = nil
+        central = nil
+        peripheral = nil
+        clearCharacteristics()
+        start(serialNumber: serialNumber)
     }
 
     /// Переподключение к ранее сохранённому устройству по UUID.
