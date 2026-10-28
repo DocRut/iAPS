@@ -305,7 +305,12 @@ public final class AidexCGMManager: CGMManager {
     public var shouldSyncToRemoteService: Bool { true }
 
     /// Aidex шлёт нотификации сам — цикл iAPS будет просыпаться на приход глюкозы.
-    public var providesBLEHeartbeat: Bool { true }
+    /// Aidex НЕ является надёжным BLE-heartbeat: у драйвера нет активного
+    /// heartbeat-механизма (в отличие от AppGroupCGM/HeartBeatManager), только
+    /// пассивный BLE-поток. Если вернуть true, DeviceDataManager отключит
+    /// heartbeat насоса (RileyLink timer tick), и при затихании Aidex-потока
+    /// iOS усыпит приложение — watchdog и loop остановятся.
+    public var providesBLEHeartbeat: Bool { false }
 
     public var managedDataInterval: TimeInterval? { nil }
 
