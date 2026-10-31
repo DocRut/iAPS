@@ -183,15 +183,29 @@ final class AidexBLEManager: NSObject {
     /// Таймер опроса истории.
     private var pollTimer: Timer?
 
-    /// Watchdog «нет данных»: если в .running 10 минут не приходит ни одного
-    /// пакета, принудительно переподключаемся — как по кнопке «Переподключить».
+    /// Watchdog «нет новых показаний»: если 5 минут не приходит ни одного
+    /// нового значения, полностью перезапускаем BLE-стек (как закрыть и
+    /// открыть приложение). Обычный reconnect не всегда убирает залипший
+    /// CBCentralManager, поэтому здесь нужен именно restart().
     private var dataWatchdog: Timer?
-    private static let dataTimeout: TimeInterval = 10 * 60
+    private static let dataTimeout: TimeInterval = 5 * 60
     private static let dataWatchdogInterval: TimeInterval = 60
     private var lastDataReceivedAt = Date()
 
     /// Для CGM-менеджера: когда последний раз приходили любые BLE-данные.
+    /// Включает служебные пакеты, keepalive, рекламу и ответы на команды,
+    /// поэтому для детектора «нет глюкозы» он не подходит.
     var lastDataAt: Date { lastDataReceivedAt }
+
+    /// Когда последний раз приходило НОВОЕ валидное показание глюкозы.
+    /// Не обновляется служебными пакетами (F003 type 4/5), keepalive и
+    /// рекламой без нового ID. Именно по нему работают watchdog и
+    /// восстановление после фона.
+    private var lastGlucoseReceivedAt = Date()
+    /// Последний ID, по которому уже отмечали новое показание. Нужен, чтобы
+    /// повторяющаяся реклама с тем же ID не продлевала watchdog бесконечно.
+    private var lastGlucoseID = 0
+    var lastGlucoseAt: Date { lastGlucoseReceivedAt }
 
     /// Таймаут обнаружения сервисов: если didDiscoverServices не пришёл,
     /// переподключаемся (CoreBluetooth иногда "зависает" на discoverServices).
@@ -244,6 +258,8 @@ final class AidexBLEManager: NSObject {
             indexShift = 0
             lastReceivedID = 0
             lastAvailableID = 0
+            lastGlucoseID = 0
+            lastGlucoseReceivedAt = Date()
             peripheralIdentifier = nil
             repairAttempts = 0
             time0 = 0
@@ -258,6 +274,9 @@ final class AidexBLEManager: NSObject {
         askKey = AidexCrypto.askKey(serial: normalized)
 
         log("старт, SN=\(normalized), мастер-ключ \(masterKey.isEmpty ? "отсутствует" : "сохранён")")
+        lastDataReceivedAt = Date()
+        lastGlucoseReceivedAt = Date()
+        startDataWatchdog()
 
         if central == nil {
             // CBCentralManagerOptionRestoreIdentifierKey нужен, чтобы iOS
@@ -428,6 +447,15 @@ final class AidexBLEManager: NSObject {
         return Date(timeIntervalSince1970: floored)
     }
 
+    /// Отмечает приход нового показания. Дубликаты (тот же ID) и служебные
+    /// пакеты не должны продлевать жизнь watchdog: иначе при «залипшем»
+    /// сенсоре, который продолжает слать keepalive, переподключения не будет.
+    private func noteNewGlucose(id: Int) {
+        guard id > lastGlucoseID else { return }
+        lastGlucoseID = id
+        lastGlucoseReceivedAt = Date()
+    }
+
     // MARK: - Запись команд
 
     private func writeEncrypted(_ command: [UInt8]) {
@@ -570,8 +598,10 @@ final class AidexBLEManager: NSObject {
         // Запускаем (или перезапускаем) опрос в режиме ежеминутных показаний.
         schedulePolling()
 
-        // И watchdog: 10 минут без входящих данных — принудительный реконнект.
+        // И watchdog: 10 минут без НОВЫХ показаний — принудительный реконнект.
+        // Служебные пакеты и keepalive не считаются данными.
         lastDataReceivedAt = Date()
+        lastGlucoseReceivedAt = Date()
         startDataWatchdog()
     }
 
@@ -606,15 +636,28 @@ final class AidexBLEManager: NSObject {
     }
 
     private func checkDataWatchdog() {
-        guard case .running = state else { return }
-        let age = Date().timeIntervalSince(lastDataReceivedAt)
+        switch state {
+        case .bluetoothUnavailable,
+             .idle,
+             .sensorEnded,
+             .unpaired:
+            return
+        default:
+            break
+        }
+
+        // Важно: считаем именно новые показания, а не любые BLE-пакеты.
+        // Иначе F003 type 4/5, keepalive и ответы lastValue бесконечно
+        // продлевают watchdog, хотя глюкоза уже не обновляется.
+        let age = Date().timeIntervalSince(lastGlucoseReceivedAt)
         guard age >= Self.dataTimeout else { return }
 
-        log("нет данных \(Int(age / 60)) мин — принудительное переподключение")
-        // Сбрасываем отметку, чтобы не дёргать реконнект каждую минуту,
+        log("нет новых показаний \(Int(age / 60)) мин (state=\(state)) — полный перезапуск BLE")
+        // Сбрасываем отметки, чтобы не дёргать restart каждую минуту,
         // если соединение почему-то не разорвётся.
+        lastGlucoseReceivedAt = Date()
         lastDataReceivedAt = Date()
-        reconnect()
+        restart()
     }
 
     // MARK: Таймаут обнаружения сервисов
@@ -749,6 +792,7 @@ final class AidexBLEManager: NSObject {
         log("onceOld id=\(id) glucose=\(last.glucose)")
 
         if last.isPlausible, hasTime {
+            noteNewGlucose(id: id)
             delegate?.aidex(didReceive: [
                 AidexSample(
                     id: id,
@@ -816,6 +860,7 @@ final class AidexBLEManager: NSObject {
             return
         }
 
+        let previousReceivedID = lastReceivedID
         var samples: [AidexSample] = []
         var id = startID
 
@@ -834,6 +879,9 @@ final class AidexBLEManager: NSObject {
         }
 
         lastReceivedID = id - 1
+        if lastReceivedID > previousReceivedID, !samples.isEmpty, hasTime {
+            noteNewGlucose(id: lastReceivedID)
+        }
         log("получено \(samples.count) исторических значений, id \(startID)…\(lastReceivedID)")
 
         if !samples.isEmpty, hasTime {
@@ -971,6 +1019,10 @@ final class AidexBLEManager: NSObject {
 
         // java.cpp: if(newtime) startLate; else askLastID
         if isNewTime {
+            // После перезапуска сенсора/сброса базы абсолютные ID могут
+            // пойти назад; разрешаем первому новому показанию снова
+            // отметиться в watchdog.
+            lastGlucoseID = 0
             writeEncrypted(AidexCommand.startLate)
         } else {
             writeEncrypted(AidexCommand.askLastID)
@@ -1066,6 +1118,7 @@ final class AidexBLEManager: NSObject {
         // текущее показание — на экране оно «зависает».
         let timestamp = date(forID: id)
 
+        noteNewGlucose(id: id)
         lastReceivedID = max(lastReceivedID, id)
         lastAvailableID = max(lastAvailableID, id)
 
@@ -1193,6 +1246,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
         var samples: [AidexSample] = []
         // java.cpp:198 — siAddedIndex(preid)
         let id = absoluteID(Int(parsed.last.minutesFromStart))
+        noteNewGlucose(id: id)
         samples.append(AidexSample(
             id: id, glucose: Int(parsed.last.glucose),
             rate: parsed.last.rate, date: date(forID: id), isCurrent: true

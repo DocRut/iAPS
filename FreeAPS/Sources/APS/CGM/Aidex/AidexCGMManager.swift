@@ -136,6 +136,12 @@ public final class AidexCGMManager: CGMManager {
     /// и восстановления после фона.
     private var lastSampleArrivalAt = Date()
 
+    /// Когда последний раз пришло именно НОВОЕ показание (новый ID), а не
+    /// дубликат/история. Именно по этому времени работает алярм и
+    /// восстановление: иначе повторяющиеся пакеты с тем же ID бесконечно
+    /// откладывают тревогу.
+    private var lastFreshSampleAt = Date()
+
     /// Уведомление «нет данных CGM» — страховка на случай, если приложение
     /// выгружено/зависло и обычный watchdog не успел сработать.
     private static let staleNotificationID = "FreeAPS.aidexCGMStale"
@@ -176,23 +182,32 @@ public final class AidexCGMManager: CGMManager {
         }
     }
 
-    /// После возврата в приложение: если и данных, и показаний давно нет,
+    /// После возврата в приложение: если новых показаний давно нет,
     /// делаем полный перезапуск BLE — то же, что закрыть/открыть приложение.
+    ///
+    /// Раньше здесь требовалось одновременно «нет показаний» и «нет любых
+    /// BLE-данных». Это ломалось, когда сенсор продолжал слать keepalive
+    /// (F003 type 4/5) или отвечал на lastValue, но новых значений глюкозы
+    /// не было: noData оставался свежим, и перезапуск не происходил.
+    /// Теперь ориентир — только новые показания.
     private func recoverAfterBackgroundIfNeeded() {
         guard !state.serialNumber.isEmpty else { return }
         switch sessionState {
-        case .failed,
-             .running:
-            break
-        default:
+        case .bluetoothUnavailable,
+             .idle,
+             .sensorEnded,
+             .unpaired:
             return
+        default:
+            break
         }
 
-        let noSample = Date().timeIntervalSince(lastSampleArrivalAt)
-        let noData = Date().timeIntervalSince(ble.lastDataAt)
-        guard noSample >= 10 * 60, noData >= 5 * 60 else { return }
+        let noFresh = Date().timeIntervalSince(lastFreshSampleAt)
+        guard noFresh >= 3 * 60 else { return }
 
-        aidex(didLog: "приложение активно, данных нет \(Int(noSample / 60)) мин — полный перезапуск BLE")
+        aidex(didLog: "приложение активно, новых показаний нет \(Int(noFresh / 60)) мин — полный перезапуск BLE")
+        // Дебаунс: не дёргать restart повторно, если он не успел подключиться.
+        lastFreshSampleAt = Date()
         ble.restart()
     }
 
@@ -204,13 +219,16 @@ public final class AidexCGMManager: CGMManager {
         content.title = "Нет данных CGM"
         content.body = "Нет новых показаний глюкозы более 15 минут. Открой iAPS и проверь сенсор."
         content.sound = .default
+        content.interruptionLevel = .timeSensitive
 
         let request = UNNotificationRequest(
             identifier: Self.staleNotificationID,
             content: content,
+            // Повторяем, пока не придут новые показания: если приложение
+            // выгружено/заснуло, одного уведомления можно не заметить.
             trigger: UNTimeIntervalNotificationTrigger(
                 timeInterval: Self.staleNotificationDelay,
-                repeats: false
+                repeats: true
             )
         )
         let center = UNUserNotificationCenter.current()
@@ -280,6 +298,12 @@ public final class AidexCGMManager: CGMManager {
         ble.reconnect()
     }
 
+    /// Полный перезапуск BLE-стека — то же, что закрыть и снова открыть
+    /// приложение. Нужен, когда reconnect не убирает залипший CBCentralManager.
+    public func restartBLE() {
+        ble.restart()
+    }
+
     /// Отвязать сенсор от телефона.
     public func unpairSensor() {
         ble.unpairSensor()
@@ -344,6 +368,10 @@ public final class AidexCGMManager: CGMManager {
         lastReceivedID: \(s.lastReceivedID)
         firmware: \(deviceInfo?.versionString ?? "-")
         latest: \(latestSample.map { "\($0.glucose) mg/dL @ \($0.date)" } ?? "-")
+        lastAnySample: \(lastSampleArrivalAt)
+        lastFreshSample: \(lastFreshSampleAt)
+        lastBlePacket: \(ble.lastDataAt)
+        lastGlucosePacket: \(ble.lastGlucoseAt)
         """
     }
 
@@ -404,10 +432,17 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
         }
 
         lastSampleArrivalAt = Date()
-        scheduleStaleNotification()
 
-        // Сохраняем прогресс истории
-        if let maxID = samples.map(\.id).max(), maxID > state.lastReceivedID {
+        // Новое показание — это новый ID, а не просто повторный пакет.
+        // Иначе F003 с тем же ID / keepalive бесконечно откладывает
+        // stale-уведомление и не даёт восстановиться после фона.
+        let previousMaxID = state.lastReceivedID
+        let maxID = samples.map(\.id).max() ?? 0
+        if maxID > previousMaxID {
+            lastFreshSampleAt = Date()
+            scheduleStaleNotification()
+
+            // Сохраняем прогресс истории
             mutateState { $0.lastReceivedID = maxID }
         }
 
@@ -457,6 +492,10 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
         }
 
         switch state {
+        case .running:
+            // Страховка на случай, если первый пакет не придёт вообще:
+            // уведомление сработает даже без единого показания.
+            scheduleStaleNotification()
         case .idle,
              .sensorEnded,
              .unpaired:

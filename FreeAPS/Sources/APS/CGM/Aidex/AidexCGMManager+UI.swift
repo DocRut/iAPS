@@ -246,6 +246,10 @@ public struct AidexSettingsView: View {
                     manager.reconnect()
                 }
 
+                Button("Полный перезапуск BLE") {
+                    manager.restartBLE()
+                }
+
                 Button("Отвязать сенсор от телефона", role: .destructive) {
                     showUnpairConfirm = true
                 }
