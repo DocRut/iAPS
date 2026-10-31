@@ -207,6 +207,12 @@ final class AidexBLEManager: NSObject {
     private var lastGlucoseID = 0
     var lastGlucoseAt: Date { lastGlucoseReceivedAt }
 
+    /// На свежей установке/потере состояния не тянем всю историю сенсора
+    /// (это тысячи записей и несколько минут). Оставляем последние 12 часов:
+    /// этого достаточно для графика и цикла, а текущие данные появляются
+    /// почти сразу. Старые записи при необходимости можно догрузить отдельно.
+    private static let maxHistoryBackfillRecords = 720
+
     /// Таймаут обнаружения сервисов: если didDiscoverServices не пришёл,
     /// переподключаемся (CoreBluetooth иногда "зависает" на discoverServices).
     private var discoveryTimeoutWorkItem: DispatchWorkItem?
@@ -1043,6 +1049,16 @@ final class AidexBLEManager: NSObject {
     /// java.cpp: whenPresent() / askHistory()
     ///   relID = startID - starthistory, но не меньше 1
     private func requestNextHistoryIfNeeded() {
+        // После свежей установки lastReceivedID == 0, а lastAvailableID уже
+        // содержит последний ID сенсора. Без этого ограничения драйвер
+        // запрашивает историю с id=1 и качает тысячи записей, задерживая
+        // текущие показания на минуты.
+        let floor = max(0, lastAvailableID - Self.maxHistoryBackfillRecords)
+        if lastReceivedID < floor {
+            log("история: пропускаю старые записи, начинаю с id=\(floor + 1) (доступно до \(lastAvailableID))")
+            lastReceivedID = floor
+        }
+
         let next = lastReceivedID + 1
         guard next <= lastAvailableID else {
             log("история загружена (следующий \(next), доступно до \(lastAvailableID))")
