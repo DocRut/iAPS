@@ -2108,7 +2108,6 @@
 		388E594F25AD948C0019842D = {
 			isa = PBXGroup;
 			children = (
-				FEBEEC142E03F45B005473DC /* Settings.bundle */,
 				FEFA5C0D299F810B00765C17 /* Core_Data.xcdatamodeld */,
 				38F3783A2613555C009DB701 /* Config.xcconfig */,
 				3818AA42274BBC1100843DB3 /* ConfigOverride.xcconfig */,

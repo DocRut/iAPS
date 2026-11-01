@@ -63,11 +63,19 @@ final class AidexBLEManager: NSObject {
 
     weak var delegate: AidexBLEManagerDelegate?
 
+    /// Вся работа CoreBluetooth, опрос и watchdog — на отдельной
+    /// последовательной очереди, как у LibreTransmitter. Main-поток может
+    /// быть занят циклом/CoreData, но BLE-сессия и таймеры продолжают жить.
+    private let bleQueue = DispatchQueue(label: "com.iaps.aidex.ble", qos: .utility)
+    private let timestampLock = NSLock()
+    private let keyLock = NSLock()
+
     private(set) var state: SessionState = .idle {
         didSet {
             guard state != oldValue else { return }
-            log("состояние: \(state)")
-            delegate?.aidex(didChangeState: state)
+            let newState = state
+            log("состояние: \(newState)")
+            notifyDelegate { $0.aidex(didChangeState: newState) }
         }
     }
 
@@ -76,7 +84,19 @@ final class AidexBLEManager: NSObject {
     /// Мастер-ключ (java.cpp: keys[0]). Приходит НОТИФИКАЦИЕЙ на F001 после
     /// записи askKey, сохраняется между подключениями (aidexXSaveKey).
     /// Им расшифровывается сессионный ключ из F002.
-    private(set) var masterKey: [UInt8] = []
+    private var _masterKey: [UInt8] = []
+    var masterKey: [UInt8] {
+        get {
+            keyLock.lock()
+            defer { keyLock.unlock() }
+            return _masterKey
+        }
+        set {
+            keyLock.lock()
+            _masterKey = newValue
+            keyLock.unlock()
+        }
+    }
 
     /// Сессионный ключ (java.cpp: keys[1]). НЕ сохраняется: при каждом
     /// подключении сенсор выдаёт новый, зашифрованный мастер-ключом,
@@ -84,7 +104,19 @@ final class AidexBLEManager: NSObject {
     private(set) var sessionKey: [UInt8] = []
 
     /// java.cpp: aidexXdat.hasTime
-    private(set) var hasTime = false
+    private var _hasTime = false
+    var hasTime: Bool {
+        get {
+            keyLock.lock()
+            defer { keyLock.unlock() }
+            return _hasTime
+        }
+        set {
+            keyLock.lock()
+            _hasTime = newValue
+            keyLock.unlock()
+        }
+    }
 
     // MARK: Модель времени и индексов
 
@@ -181,16 +213,29 @@ final class AidexBLEManager: NSObject {
     private static let pollInterval: TimeInterval = 60
 
     /// Таймер опроса истории.
-    private var pollTimer: Timer?
+    private var pollTimer: DispatchSourceTimer?
 
     /// Watchdog «нет новых показаний»: если 5 минут не приходит ни одного
     /// нового значения, полностью перезапускаем BLE-стек (как закрыть и
     /// открыть приложение). Обычный reconnect не всегда убирает залипший
     /// CBCentralManager, поэтому здесь нужен именно restart().
-    private var dataWatchdog: Timer?
+    private var dataWatchdog: DispatchSourceTimer?
     private static let dataTimeout: TimeInterval = 5 * 60
     private static let dataWatchdogInterval: TimeInterval = 60
-    private var lastDataReceivedAt = Date()
+
+    private var _lastDataReceivedAt = Date()
+    private var lastDataReceivedAt: Date {
+        get {
+            timestampLock.lock()
+            defer { timestampLock.unlock() }
+            return _lastDataReceivedAt
+        }
+        set {
+            timestampLock.lock()
+            _lastDataReceivedAt = newValue
+            timestampLock.unlock()
+        }
+    }
 
     /// Для CGM-менеджера: когда последний раз приходили любые BLE-данные.
     /// Включает служебные пакеты, keepalive, рекламу и ответы на команды,
@@ -201,7 +246,20 @@ final class AidexBLEManager: NSObject {
     /// Не обновляется служебными пакетами (F003 type 4/5), keepalive и
     /// рекламой без нового ID. Именно по нему работают watchdog и
     /// восстановление после фона.
-    private var lastGlucoseReceivedAt = Date()
+    private var _lastGlucoseReceivedAt = Date()
+    private var lastGlucoseReceivedAt: Date {
+        get {
+            timestampLock.lock()
+            defer { timestampLock.unlock() }
+            return _lastGlucoseReceivedAt
+        }
+        set {
+            timestampLock.lock()
+            _lastGlucoseReceivedAt = newValue
+            timestampLock.unlock()
+        }
+    }
+
     /// Последний ID, по которому уже отмечали новое показание. Нужен, чтобы
     /// повторяющаяся реклама с тем же ID не продлевала watchdog бесконечно.
     private var lastGlucoseID = 0
@@ -234,8 +292,31 @@ final class AidexBLEManager: NSObject {
         lastReceivedID lastID: Int,
         peripheralIdentifier identifier: String?,
         utcOffsetSeconds offset: Int?
-    )
-    {
+    ) {
+        bleQueue.async { [weak self] in
+            self?.restoreOnQueue(
+                masterKey: key,
+                hasTime: time,
+                baseStart: base,
+                secondsRemainder: seconds,
+                indexShift: shift,
+                lastReceivedID: lastID,
+                peripheralIdentifier: identifier,
+                utcOffsetSeconds: offset
+            )
+        }
+    }
+
+    private func restoreOnQueue(
+        masterKey key: [UInt8],
+        hasTime time: Bool,
+        baseStart base: Date?,
+        secondsRemainder seconds: Int,
+        indexShift shift: Int,
+        lastReceivedID lastID: Int,
+        peripheralIdentifier identifier: String?,
+        utcOffsetSeconds offset: Int?
+    ) {
         masterKey = key
         hasTime = time
         baseStart = base
@@ -248,6 +329,12 @@ final class AidexBLEManager: NSObject {
 
     /// serial — полный серийный номер, 10 символов (напр. "222225C99G").
     func start(serialNumber serial: String) {
+        bleQueue.async { [weak self] in
+            self?.startOnQueue(serialNumber: serial)
+        }
+    }
+
+    private func startOnQueue(serialNumber serial: String) {
         let normalized = serial.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard !normalized.isEmpty else {
             state = .failed("пустой серийный номер")
@@ -291,7 +378,7 @@ final class AidexBLEManager: NSObject {
             // "тихо умирает" через несколько часов в фоне, даже если
             // providesBLEHeartbeat объявлен true. См. centralManager(_:willRestoreState:).
             central = CBCentralManager(
-                delegate: self, queue: .main,
+                delegate: self, queue: bleQueue,
                 options: [CBCentralManagerOptionRestoreIdentifierKey: Self.restoreIdentifier]
             )
         } else {
@@ -302,12 +389,18 @@ final class AidexBLEManager: NSObject {
     private static let restoreIdentifier = "com.iaps.aidex.centralManager"
 
     func stop() {
+        bleQueue.async { [weak self] in
+            self?.stopOnQueue()
+        }
+    }
+
+    private func stopOnQueue() {
         if let p = peripheral { central?.cancelPeripheralConnection(p) }
         central?.stopScan()
         clearCharacteristics()
-        pollTimer?.invalidate()
+        pollTimer?.cancel()
         pollTimer = nil
-        dataWatchdog?.invalidate()
+        dataWatchdog?.cancel()
         dataWatchdog = nil
         cancelDiscoveryTimeout()
         state = .idle
@@ -315,21 +408,27 @@ final class AidexBLEManager: NSObject {
 
     /// Отвязать сенсор (java.cpp: unpaircmd). Ключ сохраняется.
     func unpairSensor() {
-        guard !sessionKey.isEmpty else {
-            log("unpair невозможен: нет сессионного ключа")
-            return
+        bleQueue.async { [weak self] in
+            guard let self else { return }
+            guard !self.sessionKey.isEmpty else {
+                self.log("unpair невозможен: нет сессионного ключа")
+                return
+            }
+            self.pendingUnpair = true
+            self.writeEncrypted(AidexCommand.unpair)
         }
-        pendingUnpair = true
-        writeEncrypted(AidexCommand.unpair)
     }
 
     /// Clear (java.cpp: clearCMD, 0xF3) — стирает историю глюкозы
     /// на сенсоре, позволяя перезапустить его как новый.
     /// Ключ обнуляется, потребуется повторное подключение.
     func clearSensor() {
-        guard !sessionKey.isEmpty else { return }
-        pendingClear = true
-        writeEncrypted(AidexCommand.clear)
+        bleQueue.async { [weak self] in
+            guard let self else { return }
+            guard !self.sessionKey.isEmpty else { return }
+            self.pendingClear = true
+            self.writeEncrypted(AidexCommand.clear)
+        }
     }
 
     // MARK: - Служебное
@@ -348,7 +447,17 @@ final class AidexBLEManager: NSObject {
         // os_log(.debug) не виден в консоли Xcode — дублируем через NSLog,
         // чтобы всегда видеть шаги BLE-сессии при отладке.
         NSLog("%@", full)
-        delegate?.aidex(didLog: full)
+        notifyDelegate { $0.aidex(didLog: full) }
+    }
+
+    /// Все делегатские вызовы уходят на main: BLE-очередь не должна
+    /// зависеть от main, но CGMManager/UI остаются на main, как и раньше.
+    private func notifyDelegate(_ action: @escaping (AidexBLEManagerDelegate) -> Void) {
+        let delegate = self.delegate
+        DispatchQueue.main.async {
+            guard let delegate else { return }
+            action(delegate)
+        }
     }
 
     private func beginScan() {
@@ -368,6 +477,12 @@ final class AidexBLEManager: NSObject {
     /// Ручное переподключение: рвём текущее соединение (если есть) и
     /// запускаем переподключение заново.
     func reconnect() {
+        bleQueue.async { [weak self] in
+            self?.reconnectOnQueue()
+        }
+    }
+
+    private func reconnectOnQueue() {
         log("ручное переподключение")
         central?.stopScan()
         if let p = peripheral {
@@ -381,14 +496,20 @@ final class AidexBLEManager: NSObject {
     /// Создаёт новый CBCentralManager, поэтому лечит «залипшее» состояние,
     /// которое обычный reconnect не убирает.
     func restart() {
+        bleQueue.async { [weak self] in
+            self?.restartOnQueue()
+        }
+    }
+
+    private func restartOnQueue() {
         guard !serialNumber.isEmpty else { return }
         log("полный перезапуск BLE")
-        stop()
+        stopOnQueue()
         central?.delegate = nil
         central = nil
         peripheral = nil
         clearCharacteristics()
-        start(serialNumber: serialNumber)
+        startOnQueue(serialNumber: serialNumber)
     }
 
     /// Переподключение к ранее сохранённому устройству по UUID.
@@ -415,7 +536,7 @@ final class AidexBLEManager: NSObject {
         let id = p.identifier.uuidString
         guard id != peripheralIdentifier else { return }
         peripheralIdentifier = id
-        delegate?.aidex(didUpdatePeripheralIdentifier: id)
+        notifyDelegate { $0.aidex(didUpdatePeripheralIdentifier: id) }
     }
 
     private func matches(name: String?) -> Bool {
@@ -480,7 +601,7 @@ final class AidexBLEManager: NSObject {
         }
 
         if elapsed < Self.writeGap {
-            DispatchQueue.main.asyncAfter(deadline: .now() + (Self.writeGap - elapsed), execute: doWrite)
+            bleQueue.asyncAfter(deadline: .now() + (Self.writeGap - elapsed), execute: doWrite)
         } else {
             doWrite()
         }
@@ -583,7 +704,7 @@ final class AidexBLEManager: NSObject {
         masterKey = raw
         lastDataReceivedAt = Date()
         log("мастер-ключ принят")
-        delegate?.aidex(didUpdateMasterKey: raw)
+        notifyDelegate { $0.aidex(didUpdateMasterKey: raw) }
         guard let charData else { return }
         peripheral?.readValue(for: charData)
     }
@@ -604,7 +725,7 @@ final class AidexBLEManager: NSObject {
         // Запускаем (или перезапускаем) опрос в режиме ежеминутных показаний.
         schedulePolling()
 
-        // И watchdog: 10 минут без НОВЫХ показаний — принудительный реконнект.
+        // И watchdog: 5 минут без НОВЫХ показаний — полный перезапуск BLE.
         // Служебные пакеты и keepalive не считаются данными.
         lastDataReceivedAt = Date()
         lastGlucoseReceivedAt = Date()
@@ -614,14 +735,20 @@ final class AidexBLEManager: NSObject {
     // MARK: Опрос истории
 
     private func schedulePolling() {
-        pollTimer?.invalidate()
+        pollTimer?.cancel()
         pollTimer = nil
 
-        let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
+        let timer = DispatchSource.makeTimerSource(queue: bleQueue)
+        timer.schedule(
+            deadline: .now() + Self.pollInterval,
+            repeating: Self.pollInterval,
+            leeway: .seconds(1)
+        )
+        timer.setEventHandler { [weak self] in
             self?.pollLatest()
         }
-        RunLoop.main.add(timer, forMode: .common)
         pollTimer = timer
+        timer.resume()
     }
 
     private func pollLatest() {
@@ -633,12 +760,20 @@ final class AidexBLEManager: NSObject {
     // MARK: - Watchdog «нет данных»
 
     private func startDataWatchdog() {
-        dataWatchdog?.invalidate()
-        let timer = Timer(timeInterval: Self.dataWatchdogInterval, repeats: true) { [weak self] _ in
+        dataWatchdog?.cancel()
+        dataWatchdog = nil
+
+        let timer = DispatchSource.makeTimerSource(queue: bleQueue)
+        timer.schedule(
+            deadline: .now() + Self.dataWatchdogInterval,
+            repeating: Self.dataWatchdogInterval,
+            leeway: .seconds(1)
+        )
+        timer.setEventHandler { [weak self] in
             self?.checkDataWatchdog()
         }
-        RunLoop.main.add(timer, forMode: .common)
         dataWatchdog = timer
+        timer.resume()
     }
 
     private func checkDataWatchdog() {
@@ -663,7 +798,7 @@ final class AidexBLEManager: NSObject {
         // если соединение почему-то не разорвётся.
         lastGlucoseReceivedAt = Date()
         lastDataReceivedAt = Date()
-        restart()
+        restartOnQueue()
     }
 
     // MARK: Таймаут обнаружения сервисов
@@ -680,7 +815,7 @@ final class AidexBLEManager: NSObject {
             self.reconnectOrScan()
         }
         discoveryTimeoutWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: item)
+        bleQueue.asyncAfter(deadline: .now() + 10, execute: item)
     }
 
     private func cancelDiscoveryTimeout() {
@@ -734,7 +869,7 @@ final class AidexBLEManager: NSObject {
             pendingUnpair = false
             sensorUTCOffset = nil
             state = .unpaired
-            stop()
+            stopOnQueue()
         case .unpairFail:
             log("отвязать не удалось")
             pendingUnpair = false
@@ -747,7 +882,7 @@ final class AidexBLEManager: NSObject {
             hasTime = false
             sensorUTCOffset = nil
             state = .unpaired
-            stop()
+            stopOnQueue()
         case .clearFail:
             log("сброс привязки не удался")
             pendingClear = false
@@ -760,7 +895,7 @@ final class AidexBLEManager: NSObject {
     private func handleDeviceInfo(_ body: [UInt8]) {
         if let info = AidexDeviceInfo(body) {
             log("прошивка \(info.versionString), срок \(info.lifeDays) дн, \(info.name)")
-            delegate?.aidex(didReceiveDeviceInfo: info)
+            notifyDelegate { $0.aidex(didReceiveDeviceInfo: info) }
         }
 
         switch time0 {
@@ -799,15 +934,15 @@ final class AidexBLEManager: NSObject {
 
         if last.isPlausible, hasTime {
             noteNewGlucose(id: id)
-            delegate?.aidex(didReceive: [
+            notifyDelegate { $0.aidex(didReceive: [
                 AidexSample(
                     id: id,
                     glucose: Int(last.glucose),
                     rate: last.rate,
-                    date: date(forID: id),
+                    date: self.date(forID: id),
                     isCurrent: false
                 )
-            ])
+            ]) }
         }
         lastAvailableID = max(lastAvailableID, id)
 
@@ -891,7 +1026,7 @@ final class AidexBLEManager: NSObject {
         log("получено \(samples.count) исторических значений, id \(startID)…\(lastReceivedID)")
 
         if !samples.isEmpty, hasTime {
-            delegate?.aidex(didReceive: samples)
+            notifyDelegate { $0.aidex(didReceive: samples) }
         }
 
         requestNextHistoryIfNeeded()
@@ -1037,13 +1172,13 @@ final class AidexBLEManager: NSObject {
 
     private func notifyTimeModel() {
         guard let baseStart else { return }
-        delegate?.aidex(didUpdateTimeModel: AidexTimeModel(
+        notifyDelegate { $0.aidex(didUpdateTimeModel: AidexTimeModel(
             baseStart: baseStart,
-            secondsRemainder: secondsRemainder,
-            indexShift: indexShift,
-            utcOffsetSeconds: sensorUTCOffset
+            secondsRemainder: self.secondsRemainder,
+            indexShift: self.indexShift,
+            utcOffsetSeconds: self.sensorUTCOffset
                 ?? AidexLocalTime.currentPhoneUTCOffset()
-        ))
+        )) }
     }
 
     /// java.cpp: whenPresent() / askHistory()
@@ -1116,7 +1251,7 @@ final class AidexBLEManager: NSObject {
             if current.sensorEnded {
                 log("сенсор завершил работу")
                 state = .sensorEnded
-                stop()
+                stopOnQueue()
             }
             return
         }
@@ -1140,7 +1275,7 @@ final class AidexBLEManager: NSObject {
 
         log("глюкоза \(current.glucose) мг/дл, \(String(format: "%.2f", current.rate)) мг/дл/мин, id=\(id)")
 
-        delegate?.aidex(didReceive: [
+        notifyDelegate { $0.aidex(didReceive: [
             AidexSample(
                 id: id,
                 glucose: Int(current.glucose),
@@ -1148,13 +1283,13 @@ final class AidexBLEManager: NSObject {
                 date: timestamp,
                 isCurrent: true
             )
-        ])
+        ]) }
 
         // java.cpp: проверка data[0]==3 идёт ПОСЛЕ saveGlucose
         if current.sensorEnded {
             log("сенсор завершил работу")
             state = .sensorEnded
-            stop()
+            stopOnQueue()
         }
     }
 }
@@ -1276,7 +1411,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
             ))
         }
         log("реклама: \(samples.count) значений, последнее \(parsed.last.glucose) мг/дл")
-        delegate?.aidex(didReceive: samples)
+        notifyDelegate { $0.aidex(didReceive: samples) }
     }
 
     func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
