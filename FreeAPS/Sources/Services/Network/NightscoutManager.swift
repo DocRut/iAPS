@@ -45,6 +45,10 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
 
     private let processQueue = DispatchQueue(label: "BaseNetworkManager.processQueue")
     private var ping: TimeInterval?
+    /// Последний 5-минутный интервал, по которому уже отправляли CGM.
+    /// Нужен, чтобы при потоке раз в минуту в Nightscout уходило только
+    /// одно показание на интервал, а не каждое.
+    private var lastNightscoutUploadBucket: Int?
 
     private var lifetime = Lifetime()
 
@@ -1086,19 +1090,45 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
         }
 
         processQueue.async {
-            let glucoseNotYetUploaded = self.nightscoutGlucoseNotUploaded(bloodGlucose: bloodGlucose)
+            let glucoseForUpload = self.glucoseForNightscoutUpload(bloodGlucose)
+            let glucoseNotYetUploaded = self.nightscoutGlucoseNotUploaded(bloodGlucose: glucoseForUpload)
             self.uploadGlucose(
                 upload: glucoseNotYetUploaded,
-                allGlucose: bloodGlucose,
+                allGlucose: glucoseForUpload,
                 fileToSave: OpenAPS.Nightscout.uploadedGlucose
             )
 
             let cgmStateNotUploaded = self.nightscoutCGMStateNotUploaded()
             self.uploadTreatments(cgmStateNotUploaded, fileToSave: OpenAPS.Nightscout.uploadedCGMState)
 
-            let manualGlucoseNotYetUploaded = self.nightscoutManualGlucoseNotUploaded(bloodGlucose: bloodGlucose)
+            let manualGlucoseNotYetUploaded = self.nightscoutManualGlucoseNotUploaded(bloodGlucose: glucoseForUpload)
             self.uploadTreatments(manualGlucoseNotYetUploaded, fileToSave: OpenAPS.Nightscout.uploadedManualGlucose)
         }
+    }
+
+    /// При настройке «5 минут» оставляет одно CGM-показание на каждый
+    /// 5-минутный интервал. Ручные измерения (fingerstick) не фильтруются.
+    private func glucoseForNightscoutUpload(_ bloodGlucose: [BloodGlucose]) -> [BloodGlucose] {
+        let interval = settingsManager.settings.nightscoutUploadInterval
+        guard interval >= 5, isUploadGlucoseEnabled else {
+            lastNightscoutUploadBucket = nil
+            return bloodGlucose
+        }
+
+        var result: [BloodGlucose] = []
+        for reading in bloodGlucose.sorted(by: { $0.dateString < $1.dateString }) {
+            if reading.type == GlucoseType.manual.rawValue {
+                result.append(reading)
+                continue
+            }
+
+            let bucket = Int(reading.dateString.timeIntervalSince1970 / 300)
+            if bucket != lastNightscoutUploadBucket {
+                result.append(reading)
+                lastNightscoutUploadBucket = bucket
+            }
+        }
+        return result
     }
 
     func editOverride(_ profile: String, _ duration_: Double, _ date: Date) {

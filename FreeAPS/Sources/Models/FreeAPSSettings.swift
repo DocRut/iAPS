@@ -6,6 +6,8 @@ struct FreeAPSSettings: JSON, Equatable {
     var allowAnnouncements: Bool = false
     var useAutotune: Bool = false
     var isUploadEnabled: Bool = false
+    /// 1 = каждое показание, 5 = одно показание на 5-минутный интервал.
+    var nightscoutUploadInterval: Int = 1
     var nightscoutFetchEnabled: Bool = true
     var debugOptions: Bool = false
     var insulinReqPercentage: Decimal = 70
@@ -198,6 +200,10 @@ extension FreeAPSSettings: Decodable {
 
         if let isUploadEnabled = try? container.decode(Bool.self, forKey: .isUploadEnabled) {
             settings.isUploadEnabled = isUploadEnabled
+        }
+
+        if let nightscoutUploadInterval = try? container.decode(Int.self, forKey: .nightscoutUploadInterval) {
+            settings.nightscoutUploadInterval = nightscoutUploadInterval == 5 ? 5 : 1
         }
 
         if let nightscoutFetchEnabled = try? container.decode(Bool.self, forKey: .nightscoutFetchEnabled) {

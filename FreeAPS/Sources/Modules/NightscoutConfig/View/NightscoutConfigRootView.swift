@@ -70,8 +70,20 @@ extension NightscoutConfig {
 
                 Section {
                     Toggle("Upload", isOn: $state.isUploadEnabled)
+
+                    if state.isUploadEnabled {
+                        Picker("CGM upload interval", selection: $state.nightscoutUploadInterval) {
+                            Text("1 min").tag(1)
+                            Text("5 min").tag(5)
+                        }
+                        .pickerStyle(.segmented)
+                    }
                 } header: {
                     Text("Allow Uploads")
+                } footer: {
+                    Text(
+                        "5 min uploads one CGM reading per 5-minute interval. This reduces Nightscout database growth and network/battery usage."
+                    )
                 }
 
                 if let cgmManager = state.deviceManager.cgmManager,

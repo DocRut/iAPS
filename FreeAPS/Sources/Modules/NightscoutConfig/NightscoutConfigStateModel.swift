@@ -28,6 +28,7 @@ extension NightscoutConfig {
         @Published var uploading = false
         @Published var uploadingProgress = 0.0
         @Published var isUploadEnabled = false // Allow uploads
+        @Published var nightscoutUploadInterval: Int = 1 // 1 or 5 minutes
         @Published var nightscoutFetchEnabled = true // Allow fetch
         @Published var units: GlucoseUnits = .mmolL
         @Published var dia: Decimal = 6
@@ -62,6 +63,9 @@ extension NightscoutConfig {
 
             subscribeSetting(\.allowAnnouncements, on: $allowAnnouncements) { allowAnnouncements = $0 }
             subscribeSetting(\.isUploadEnabled, on: $isUploadEnabled) { isUploadEnabled = $0 }
+            subscribeSetting(\.nightscoutUploadInterval, on: $nightscoutUploadInterval) {
+                nightscoutUploadInterval = $0 == 5 ? 5 : 1
+            }
             subscribeSetting(\.nightscoutFetchEnabled, on: $nightscoutFetchEnabled) { nightscoutFetchEnabled = $0 }
         }
 

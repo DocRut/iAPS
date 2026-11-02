@@ -3824,3 +3824,7 @@ Enact a temp Basal or a temp target */
 "too small temp basal amount" = "too small temp basal amount";
 "⚠️ Warning! The entered insulin amount is greater than your Max Bolus setting!" = "⚠️ Warning! The entered insulin amount is greater than your Max Bolus setting!";
 " Target Glucose" = " Target Glucose";
+"CGM upload interval" = "Интервал выгрузки CGM";
+"1 min" = "1 мин";
+"5 min" = "5 мин";
+"5 min uploads one CGM reading per 5-minute interval. This reduces Nightscout database growth and network/battery usage." = "5 мин — одно показание CGM на 5-минутный интервал. Это уменьшает рост базы Nightscout и расход батареи.";
