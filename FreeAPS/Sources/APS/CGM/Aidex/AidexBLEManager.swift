@@ -274,6 +274,12 @@ final class AidexBLEManager: NSObject {
     /// Таймаут обнаружения сервисов: если didDiscoverServices не пришёл,
     /// переподключаемся (CoreBluetooth иногда "зависает" на discoverServices).
     private var discoveryTimeoutWorkItem: DispatchWorkItem?
+    private var characteristicsTimeoutWorkItem: DispatchWorkItem?
+    private var sessionTimeoutWorkItem: DispatchWorkItem?
+    private var connectTimeoutWorkItem: DispatchWorkItem?
+    private var reconnectWorkItem: DispatchWorkItem?
+    private var reconnectAttempt = 0
+    private static let maxReconnectAttempts = 5
 
     /// UUID конкретного CBPeripheral (сохраняется между запусками), чтобы
     /// переподключаться в фоне через retrievePeripherals, а не сканированием
@@ -367,6 +373,11 @@ final class AidexBLEManager: NSObject {
         askKey = AidexCrypto.askKey(serial: normalized)
 
         log("старт, SN=\(normalized), мастер-ключ \(masterKey.isEmpty ? "отсутствует" : "сохранён")")
+        cancelReconnect()
+        cancelConnectTimeout()
+        cancelCharacteristicsTimeout()
+        cancelSessionTimeout()
+        reconnectAttempt = 0
         lastDataReceivedAt = Date()
         lastGlucoseReceivedAt = Date()
         startDataWatchdog()
@@ -403,6 +414,11 @@ final class AidexBLEManager: NSObject {
         dataWatchdog?.cancel()
         dataWatchdog = nil
         cancelDiscoveryTimeout()
+        cancelCharacteristicsTimeout()
+        cancelSessionTimeout()
+        cancelConnectTimeout()
+        cancelReconnect()
+        reconnectAttempt = 0
         state = .idle
     }
 
@@ -484,6 +500,11 @@ final class AidexBLEManager: NSObject {
 
     private func reconnectOnQueue() {
         log("ручное переподключение")
+        cancelReconnect()
+        cancelConnectTimeout()
+        cancelCharacteristicsTimeout()
+        cancelSessionTimeout()
+        reconnectAttempt = 0
         central?.stopScan()
         if let p = peripheral {
             central?.cancelPeripheralConnection(p)
@@ -527,6 +548,7 @@ final class AidexBLEManager: NSObject {
         p.delegate = self
         state = .connecting
         central.connect(p, options: nil)
+        startConnectTimeout()
         return true
     }
 
@@ -711,6 +733,11 @@ final class AidexBLEManager: NSObject {
 
     /// Начало рабочей сессии — общая точка для нового и сохранённого ключа.
     private func beginSession() {
+        cancelConnectTimeout()
+        cancelCharacteristicsTimeout()
+        cancelSessionTimeout()
+        cancelReconnect()
+        reconnectAttempt = 0
         state = .running
 
         if let peripheral, let f003 = charPrivateBonded {
@@ -812,7 +839,7 @@ final class AidexBLEManager: NSObject {
             if let p = self.peripheral {
                 self.central?.cancelPeripheralConnection(p)
             }
-            self.reconnectOrScan()
+            self.scheduleReconnect()
         }
         discoveryTimeoutWorkItem = item
         bleQueue.asyncAfter(deadline: .now() + 10, execute: item)
@@ -821,6 +848,101 @@ final class AidexBLEManager: NSObject {
     private func cancelDiscoveryTimeout() {
         discoveryTimeoutWorkItem?.cancel()
         discoveryTimeoutWorkItem = nil
+    }
+
+    private func startCharacteristicsTimeout() {
+        cancelCharacteristicsTimeout()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard case .discoveringServices = self.state else { return }
+            self.log("таймаут обнаружения характеристик — переподключаюсь")
+            self.scheduleReconnect()
+        }
+        characteristicsTimeoutWorkItem = item
+        bleQueue.asyncAfter(deadline: .now() + 10, execute: item)
+    }
+
+    private func cancelCharacteristicsTimeout() {
+        characteristicsTimeoutWorkItem?.cancel()
+        characteristicsTimeoutWorkItem = nil
+    }
+
+    private func startSessionTimeout() {
+        cancelSessionTimeout()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            switch self.state {
+            case .awaitingSessionKey,
+                 .discoveringServices:
+                self.log("таймаут handshake — переподключаюсь")
+                self.scheduleReconnect()
+            default:
+                break
+            }
+        }
+        sessionTimeoutWorkItem = item
+        bleQueue.asyncAfter(deadline: .now() + 15, execute: item)
+    }
+
+    private func cancelSessionTimeout() {
+        sessionTimeoutWorkItem?.cancel()
+        sessionTimeoutWorkItem = nil
+    }
+
+    private func startConnectTimeout() {
+        cancelConnectTimeout()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard case .connecting = self.state else { return }
+            self.log("таймаут подключения — переподключаюсь")
+            if let p = self.peripheral {
+                self.central?.cancelPeripheralConnection(p)
+            }
+            self.scheduleReconnect()
+        }
+        connectTimeoutWorkItem = item
+        bleQueue.asyncAfter(deadline: .now() + 15, execute: item)
+    }
+
+    private func cancelConnectTimeout() {
+        connectTimeoutWorkItem?.cancel()
+        connectTimeoutWorkItem = nil
+    }
+
+    private func scheduleReconnect() {
+        switch state {
+        case .bluetoothUnavailable,
+             .idle,
+             .sensorEnded,
+             .unpaired:
+            return
+        default:
+            break
+        }
+        guard reconnectWorkItem == nil else { return }
+
+        reconnectAttempt += 1
+        if reconnectAttempt > Self.maxReconnectAttempts {
+            log("переподключение: превышено число попыток — полный перезапуск BLE")
+            reconnectAttempt = 0
+            restartOnQueue()
+            return
+        }
+
+        let delay = min(15, Double(reconnectAttempt) * 3)
+        log("переподключение: попытка \(reconnectAttempt)/\(Self.maxReconnectAttempts) через \(Int(delay)) с")
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.reconnectWorkItem = nil
+            self.reconnectOrScan()
+        }
+        reconnectWorkItem = item
+        bleQueue.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    private func cancelReconnect() {
+        reconnectWorkItem?.cancel()
+        reconnectWorkItem = nil
     }
 
     // MARK: - Диспетчер ответов F002
@@ -1379,6 +1501,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
         rememberPeripheral(peripheral)
         state = .connecting
         central.connect(peripheral, options: nil)
+        startConnectTimeout()
     }
 
     /// Пассивный разбор рекламы. Полезен, если подключение ещё не установлено.
@@ -1415,6 +1538,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
     }
 
     func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        cancelConnectTimeout()
         rememberPeripheral(peripheral)
         repairAttempts = 0
         state = .discoveringServices
@@ -1428,7 +1552,8 @@ extension AidexBLEManager: CBCentralManagerDelegate {
         error: Error?
     ) {
         log("подключение не удалось: \(error?.localizedDescription ?? "-")")
-        reconnectOrScan()
+        cancelConnectTimeout()
+        scheduleReconnect()
     }
 
     func centralManager(
@@ -1438,13 +1563,16 @@ extension AidexBLEManager: CBCentralManagerDelegate {
     ) {
         log("отключено: \(error?.localizedDescription ?? "штатно")")
         clearCharacteristics()
+        cancelConnectTimeout()
+        cancelCharacteristicsTimeout()
+        cancelSessionTimeout()
         switch state {
         case .idle,
              .sensorEnded,
              .unpaired:
             break
         default:
-            reconnectOrScan()
+            scheduleReconnect()
         }
     }
 }
@@ -1454,6 +1582,7 @@ extension AidexBLEManager: CBCentralManagerDelegate {
 extension AidexBLEManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         cancelDiscoveryTimeout()
+        startCharacteristicsTimeout()
         guard error == nil,
               let service = peripheral.services?.first(where: { $0.uuid == AidexBLE.service })
         else {
@@ -1489,6 +1618,9 @@ extension AidexBLEManager: CBPeripheralDelegate {
             state = .failed("не все характеристики найдены")
             return
         }
+
+        cancelCharacteristicsTimeout()
+        startSessionTimeout()
 
         // AidexXGattCallback.discover(): при наличии ключа сразу F003, иначе F001.
         // На iOS порядок другой: сперва включаем нотификации F002 —

@@ -44,6 +44,10 @@ public struct AidexCGMState: RawRepresentable, Equatable {
     /// без сканирования (retrievePeripherals).
     public var peripheralIdentifier: String?
 
+    /// Использовать свежие Aidex-показания как heartbeat для запуска loop.
+    /// Может увеличить обмен с помпой и расход батареи.
+    public var heartbeatEnabled: Bool = false
+
     /// java.cpp: getRestartTime() — фактическое начало текущего цикла сенсора
     public var effectiveStart: Date? {
         guard let baseStart else { return nil }
@@ -65,6 +69,7 @@ public struct AidexCGMState: RawRepresentable, Equatable {
         lastReceivedID = rawValue["lastReceivedID"] as? Int ?? 0
         sensorLifeDays = rawValue["sensorLifeDays"] as? Int ?? AidexBLE.defaultSensorLifetimeDays
         peripheralIdentifier = rawValue["peripheralIdentifier"] as? String
+        heartbeatEnabled = rawValue["heartbeatEnabled"] as? Bool ?? false
     }
 
     public var rawValue: RawValue {
@@ -80,6 +85,7 @@ public struct AidexCGMState: RawRepresentable, Equatable {
         if let baseStart { raw["baseStart"] = baseStart }
         if let sensorUTCOffsetSeconds { raw["sensorUTCOffsetSeconds"] = sensorUTCOffsetSeconds }
         if let peripheralIdentifier { raw["peripheralIdentifier"] = peripheralIdentifier }
+        raw["heartbeatEnabled"] = heartbeatEnabled
         return raw
     }
 }
@@ -127,6 +133,9 @@ public final class AidexCGMManager: CGMManager {
 
     private let ble = AidexBLEManager()
 
+    private lazy var appCoordinator: AppCoordinator? = FreeAPSApp.resolver.resolve(AppCoordinator.self)
+    private var heartbeatTimer: DispatchSourceTimer?
+
     private var latestSample: AidexSample?
     private var sessionState: AidexBLEManager.SessionState = .idle
     private var deviceInfo: AidexDeviceInfo?
@@ -167,6 +176,7 @@ public final class AidexCGMManager: CGMManager {
     }
 
     deinit {
+        heartbeatTimer?.cancel()
         if let foregroundObserver {
             Foundation.NotificationCenter.default.removeObserver(foregroundObserver)
         }
@@ -180,6 +190,43 @@ public final class AidexCGMManager: CGMManager {
         ) { [weak self] _ in
             self?.recoverAfterBackgroundIfNeeded()
         }
+    }
+
+    /// Публичный переключатель из настроек CGM.
+    public func setHeartbeatEnabled(_ enabled: Bool) {
+        mutateState { $0.heartbeatEnabled = enabled }
+        if enabled, sessionState == .running {
+            startHeartbeatTimer()
+        } else {
+            stopHeartbeatTimer()
+        }
+    }
+
+    /// Aidex-heartbeat: раз в минуту, если данные свежие и loop не идёт,
+    /// просим DeviceDataManager выполнить цикл. Частоту самого loop
+    /// ограничивает APSManager (`allowOneMinuteLoop` → 1 мин, иначе 5 мин).
+    private func startHeartbeatTimer() {
+        stopHeartbeatTimer()
+        guard state.heartbeatEnabled else { return }
+
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 60, repeating: 60, leeway: .seconds(2))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            guard self.state.heartbeatEnabled, self.sessionState == .running else { return }
+            guard Date().timeIntervalSince(self.lastFreshSampleAt) < 2 * 60 else { return }
+            guard self.appCoordinator?.isLooping.value != true else { return }
+
+            self.aidex(didLog: "Aidex heartbeat: triggering loop")
+            self.appCoordinator?.sendHeartbeat()
+        }
+        heartbeatTimer = timer
+        timer.resume()
+    }
+
+    private func stopHeartbeatTimer() {
+        heartbeatTimer?.cancel()
+        heartbeatTimer = nil
     }
 
     /// После возврата в приложение: если новых показаний давно нет,
@@ -372,6 +419,7 @@ public final class AidexCGMManager: CGMManager {
         lastFreshSample: \(lastFreshSampleAt)
         lastBlePacket: \(ble.lastDataAt)
         lastGlucosePacket: \(ble.lastGlucoseAt)
+        heartbeat: \(state.heartbeatEnabled)
         """
     }
 
@@ -496,10 +544,14 @@ extension AidexCGMManager: AidexBLEManagerDelegate {
             // Страховка на случай, если первый пакет не придёт вообще:
             // уведомление сработает даже без единого показания.
             scheduleStaleNotification()
+            if self.state.heartbeatEnabled {
+                startHeartbeatTimer()
+            }
         case .idle,
              .sensorEnded,
              .unpaired:
             cancelStaleNotification()
+            stopHeartbeatTimer()
         default:
             break
         }

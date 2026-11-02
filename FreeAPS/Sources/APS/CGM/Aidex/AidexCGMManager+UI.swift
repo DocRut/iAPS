@@ -214,6 +214,22 @@ public struct AidexSettingsView: View {
                 }
             }
 
+            Section {
+                Toggle(
+                    "Aidex heartbeat",
+                    isOn: Binding(
+                        get: { manager.state.heartbeatEnabled },
+                        set: { manager.setHeartbeatEnabled($0) }
+                    )
+                )
+            } header: {
+                Text("Heartbeat")
+            } footer: {
+                Text(
+                    "Раз в минуту, если данные Aidex свежие и цикл не выполняется, запускать цикл iAPS. Может увеличить обмен с помпой и расход батареи."
+                )
+            }
+
             Section("Диагностика") {
                 Text(manager.debugDescription)
                     .font(.system(.footnote, design: .monospaced))
