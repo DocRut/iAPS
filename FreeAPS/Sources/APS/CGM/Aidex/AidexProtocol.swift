@@ -382,13 +382,22 @@ struct AidexDeviceInfo {
 
     init?(_ b: [UInt8]) {
         // reg10, reg01, ofDeviceModel1(2), version0..3, days, ofDeviceModel2, name[10]
-        guard b.count >= 20 else { return nil }
+        //
+        // ВАЖНО: имя не всегда дополнено до ровно 10 байт. На части прошивок
+        // пакет короче 20 байт (например, имя короче или без NUL-паддинга),
+        // поэтому требуем только обязательные поля до model2 включительно.
+        guard b.count >= 10 else { return nil }
         deviceModel1 = UInt16(b[2]) | UInt16(b[3]) << 8
         version = (b[4], b[5], b[6], b[7])
         lifeDays = b[8]
         deviceModel2 = b[9]
-        let nameBytes = Array(b[10 ..< min(20, b.count)])
-        name = String(bytes: nameBytes.prefix(while: { $0 != 0 }), encoding: .ascii) ?? ""
+        let end = min(20, b.count)
+        var nameBytes = Array(b[10 ..< end])
+        if let nul = nameBytes.firstIndex(of: 0) {
+            nameBytes = Array(nameBytes[..<nul])
+        }
+        name = String(bytes: nameBytes, encoding: .ascii)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
     var versionString: String {

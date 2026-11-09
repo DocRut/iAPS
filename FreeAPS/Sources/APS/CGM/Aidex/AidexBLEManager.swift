@@ -242,6 +242,10 @@ final class AidexBLEManager: NSObject {
     /// поэтому для детектора «нет глюкозы» он не подходит.
     var lastDataAt: Date { lastDataReceivedAt }
 
+    /// Сырые байты последнего пакета deviceInfo (0x0110) в hex.
+    /// Нужны в диагностике, если прошивку не удалось разобрать.
+    private(set) var lastDeviceInfoRawHex = "-"
+
     /// Когда последний раз приходило НОВОЕ валидное показание глюкозы.
     /// Не обновляется служебными пакетами (F003 type 4/5), keepalive и
     /// рекламой без нового ID. Именно по нему работают watchdog и
@@ -1015,9 +1019,13 @@ final class AidexBLEManager: NSObject {
 
     /// java.cpp: deviceInfo()
     private func handleDeviceInfo(_ body: [UInt8]) {
+        let hex = body.map { String(format: "%02X", $0) }.joined(separator: " ")
+        lastDeviceInfoRawHex = hex
         if let info = AidexDeviceInfo(body) {
-            log("прошивка \(info.versionString), срок \(info.lifeDays) дн, \(info.name)")
+            log("прошивка \(info.versionString), срок \(info.lifeDays) дн, \(info.name), deviceInfo \(body.count) б: \(hex)")
             notifyDelegate { $0.aidex(didReceiveDeviceInfo: info) }
+        } else {
+            log("deviceInfo: не удалось разобрать \(body.count) б: \(hex)")
         }
 
         switch time0 {

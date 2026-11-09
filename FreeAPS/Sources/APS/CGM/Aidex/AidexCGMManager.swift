@@ -414,6 +414,7 @@ public final class AidexCGMManager: CGMManager {
         hasTime: \(s.hasTime)
         lastReceivedID: \(s.lastReceivedID)
         firmware: \(deviceInfo?.versionString ?? "-")
+        deviceInfoRaw: \(ble.lastDeviceInfoRawHex)
         latest: \(latestSample.map { "\($0.glucose) mg/dL @ \($0.date)" } ?? "-")
         lastAnySample: \(lastSampleArrivalAt)
         lastFreshSample: \(lastFreshSampleAt)
